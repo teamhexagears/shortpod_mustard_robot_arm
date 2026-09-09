@@ -68,7 +68,7 @@ const byte POSE_COUNT = 6;
   You MUST replace them with safe values measured on your own arm.
 */
 int minAngle[POSE_COUNT] = {
-  20,  // Claw
+  100,  // Claw
   30,  // Wrist 1
   0,  // Wrist 2
   30,  // Elbow
@@ -77,7 +77,7 @@ int minAngle[POSE_COUNT] = {
 };
 
 int maxAngle[POSE_COUNT] = {
-  85,   // Claw
+  179,   // Claw
   150,  // Wrist 1
   359,  // Wrist 2
   150,  // Elbow
@@ -93,7 +93,7 @@ int maxAngle[POSE_COUNT] = {
   During first testing, leave applyPose() commented out in setup().
 */
 int pose[POSE_COUNT] = {
-  70,  // Claw
+  150,  // Claw
   90,  // Wrist 1
   90,  // Wrist 2
   90,  // Elbow
@@ -240,7 +240,7 @@ void showHelp() {
 
 void goHome() {
   // Replace these six numbers after you have calibrated your real HOME pose.
-  pose[0] = 70;   // Claw
+  pose[0] = 150;   // Claw
   pose[1] = 80;   // Wrist 1
   pose[2] = 90;   // Wrist 2
   pose[3] = 90;   // Elbow
@@ -252,6 +252,7 @@ void goHome() {
   Serial.println(F("Moved to HOME pose."));
   //showPose();
 }
+
 
 void moveJoint(byte poseIndex, int direction) {
   pose[poseIndex] += direction * STEP;
@@ -270,6 +271,14 @@ void moveJoint(byte poseIndex, int direction) {
   //showPose();
 }
 
+void testMove(int angle1, int angle2) {
+  pose[0] = angle1;
+  applyPose();
+  delay(1000);
+  pose[0] = angle2;
+  applyPose();
+}
+
 void processCommand(char *cmd) {
   if (strcmp(cmd, "HELP") == 0) {
     showHelp();
@@ -283,6 +292,11 @@ void processCommand(char *cmd) {
 
   if (strcmp(cmd, "LIMITS") == 0) {
     showLimits();
+    return;
+  }
+
+  if (strcmp(cmd, "TEST") == 0) {
+    testMove(179, 105);
     return;
   }
 
