@@ -69,19 +69,19 @@ const byte POSE_COUNT = 6;
 */
 int minAngle[POSE_COUNT] = {
   100,  // Claw
-  30,  // Wrist 1
+  0,  // Wrist 1
   0,  // Wrist 2
-  30,  // Elbow
-  60,  // Arm 1
-  20   // Base
+  10,  // Elbow
+  30,  // Arm 1
+  0   // Base
 };
 
 int maxAngle[POSE_COUNT] = {
   179,   // Claw
-  150,  // Wrist 1
-  359,  // Wrist 2
-  150,  // Elbow
-  120,  // Arm 1
+  90,  // Wrist 1
+  179,  // Wrist 2
+  130,  // Elbow
+  150,  // Arm 1
   160   // Base
 };
 
@@ -94,11 +94,11 @@ int maxAngle[POSE_COUNT] = {
 */
 int pose[POSE_COUNT] = {
   150,  // Claw
-  90,  // Wrist 1
+  30,  // Wrist 1
   90,  // Wrist 2
   90,  // Elbow
-  90,  // Arm 1
-  90   // Base
+  40,  // Arm 1
+  80   // Base
 };
 
 char commandBuffer[32];
@@ -116,7 +116,6 @@ void applyPose() {
   for (byte i = 0; i < POSE_COUNT; i++) {
     pose[i] = clampAngle(pose[i], minAngle[i], maxAngle[i]);
   }
-
   clawServo.write(pose[0]);
   wrist1Servo.write(pose[1]);
   wrist2Servo.write(pose[2]);
@@ -241,11 +240,11 @@ void showHelp() {
 void goHome() {
   // Replace these six numbers after you have calibrated your real HOME pose.
   pose[0] = 150;   // Claw
-  pose[1] = 80;   // Wrist 1
+  pose[1] = 30;   // Wrist 1
   pose[2] = 90;   // Wrist 2
-  pose[3] = 90;   // Elbow
-  pose[4] = 110;  // Arm 1; Arm 2 is 180 - Arm 1
-  pose[5] = 50;   // Base
+  pose[3] = 130;   // Elbow
+  pose[4] = 30;  // Arm 1; Arm 2 is 180 - Arm 1
+  pose[5] = 80;   // Base
 
   applyPose();
 
@@ -271,12 +270,10 @@ void moveJoint(byte poseIndex, int direction) {
   //showPose();
 }
 
-void testMove(int angle1, int angle2) {
-  pose[0] = angle1;
+void turn_motor(int motor_index, int angle, int delay_ms) {
+  pose[motor_index] = angle;
   applyPose();
-  delay(1000);
-  pose[0] = angle2;
-  applyPose();
+  delay(delay_ms);
 }
 
 void processCommand(char *cmd) {
@@ -295,12 +292,29 @@ void processCommand(char *cmd) {
     return;
   }
 
-  if (strcmp(cmd, "TEST") == 0) {
-    testMove(179, 105);
+  if (strcmp(cmd, "WAKEUP") == 0) {
+    int sleep_time = 1000;
+    turn_motor(4, 70, sleep_time);
+    turn_motor(4, 30, sleep_time);
+    turn_motor(5, 30, sleep_time);
+    turn_motor(5, 140, sleep_time);
+    turn_motor(5, 80, sleep_time);
+    turn_motor(3, 100, sleep_time);
+    turn_motor(3, 50, sleep_time);
+    turn_motor(1, 70, sleep_time);
+    turn_motor(1, 0, sleep_time);
+    turn_motor(0, 170, sleep_time);
+    turn_motor(0, 110, sleep_time);
+    turn_motor(2, 175, 0);
+    turn_motor(2, 5, 0);
+    turn_motor(2, 175, 0);
+    turn_motor(2, 5, 0);
+    turn_motor(2, 90, 0);
     return;
   }
 
-  if (strcmp(cmd, "HOME") == 0) {
+
+  if (strcmp(cmd, "HOME") == 0 || strcmp(cmd, "SLEEP") == 0) {
     goHome();
     return;
   }
@@ -343,8 +357,11 @@ void processCommand(char *cmd) {
 */
   // W1+, W1-, W2+, W2- : Wrist motors
   if (strlen(cmd) == 3 && cmd[0] == 'W' && (cmd[1] == '1' || cmd[1] == '2')) {
-
     byte wristIndex = (cmd[1] == '1') ? 1 : 2;
+  Serial.print(F("INFO> cmd2    = "));
+  Serial.println(cmd[2]);
+  Serial.print(F("wristIndex    = "));
+  Serial.println(wristIndex);
 
     if (cmd[2] == '+') {
       moveJoint(wristIndex, 5);
@@ -359,11 +376,11 @@ void processCommand(char *cmd) {
   // E+ or E- : Elbow
   if (strlen(cmd) == 2 && cmd[0] == 'E') {
     if (cmd[1] == '+') {
-      moveJoint(3, 1);
+      moveJoint(3, 5);
       return;
     }
     if (cmd[1] == '-') {
-      moveJoint(3, -1);
+      moveJoint(3, -5);
       return;
     }
   }
@@ -371,11 +388,11 @@ void processCommand(char *cmd) {
   // A+ or A- : Arm 1 + Arm 2 mirror
   if (strlen(cmd) == 2 && cmd[0] == 'A') {
     if (cmd[1] == '+') {
-      moveJoint(4, 1);
+      moveJoint(4, 5);
       return;
     }
     if (cmd[1] == '-') {
-      moveJoint(4, -1);
+      moveJoint(4, -5);
       return;
     }
   }
@@ -383,11 +400,11 @@ void processCommand(char *cmd) {
   // B+ or B- : Base
   if (strlen(cmd) == 2 && cmd[0] == 'B') {
     if (cmd[1] == '+') {
-      moveJoint(5, 1);
+      moveJoint(5, 5);
       return;
     }
     if (cmd[1] == '-') {
-      moveJoint(5, -1);
+      moveJoint(5, -5);
       return;
     }
   }
@@ -397,7 +414,6 @@ void processCommand(char *cmd) {
 
 void setup() {
   Serial.begin(9600);
-
   clawServo.attach(CLAW_PIN);
   wrist1Servo.attach(WRIST1_PIN);
   wrist2Servo.attach(WRIST2_PIN);
@@ -421,11 +437,14 @@ void setup() {
     3. Remove the two slashes below to enXX`lable applyPose().
   */
 
-  // applyPose();
-
+  //applyPose();
+  goHome();
+  
   Serial.println(F("Smart Weeding Arm Calibration Ready"));
   showHelp();
   showPose();
+  Serial.println(F("INFO> Init Setup Completed"));
+
 }
 
 void loop() {
