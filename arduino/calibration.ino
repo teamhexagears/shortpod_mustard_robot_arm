@@ -19,7 +19,7 @@
   SHOW
   LIMITS
   HOME
-sip  WAKEUP
+  WAKEUP
   TEST
 
 
@@ -226,10 +226,10 @@ void showHelp() {
 void goHome() {
   // Replace these six numbers after you have calibrated your real HOME pose.
   pose[0] = 150;   // Claw
-  pose[1] = 30;   // Wrist 1
+  pose[1] = 50;   // Wrist 1
   pose[2] = 90;   // Wrist 2
   pose[3] = 90;   // Elbow
-  pose[4] = 30;  // Arm 1; Arm 2 is 180 - Arm 1
+  pose[4] = 60;  // Arm 1; Arm 2 is 180 - Arm 1
   pose[5] = 80;   // Base
 
   applyPose();
@@ -294,6 +294,7 @@ void processCommand(char *cmd) {
     int sleep_time = 1000;
     turn_motor(4, 70, sleep_time);
     turn_motor(4, 30, sleep_time);
+    turn_motor(4, 60, sleep_time);
     turn_motor(5, 30, sleep_time);
     turn_motor(5, 140, sleep_time);
     turn_motor(5, 80, sleep_time);
