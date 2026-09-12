@@ -242,7 +242,7 @@ void goHome() {
   pose[0] = 150;   // Claw
   pose[1] = 30;   // Wrist 1
   pose[2] = 90;   // Wrist 2
-  pose[3] = 130;   // Elbow
+  pose[3] = 90;   // Elbow
   pose[4] = 30;  // Arm 1; Arm 2 is 180 - Arm 1
   pose[5] = 80;   // Base
 
@@ -251,7 +251,6 @@ void goHome() {
   Serial.println(F("Moved to HOME pose."));
   //showPose();
 }
-
 
 void moveJoint(byte poseIndex, int direction) {
   pose[poseIndex] += direction * STEP;
@@ -292,7 +291,23 @@ void processCommand(char *cmd) {
     return;
   }
 
+  if (strcmp(cmd, "TEST") == 0) {
+    int sleep_time = 1000;
+    turn_motor(5, 30, sleep_time);
+    turn_motor(5, 140, sleep_time);
+    turn_motor(5, 80, sleep_time);
+    return;
+  }
+
   if (strcmp(cmd, "WAKEUP") == 0) {
+    // Pose value order:
+    // [0] Claw
+    // [1] Wrist 1
+    // [2] Wrist 2
+    // [3] Elbow
+    // [4] Arm 1
+    // [5] Base
+
     int sleep_time = 1000;
     turn_motor(4, 70, sleep_time);
     turn_motor(4, 30, sleep_time);
@@ -330,7 +345,7 @@ void processCommand(char *cmd) {
       return;
     }
   }
-/*
+
   // W1+ or W1- : Wrist 1
   if (strlen(cmd) == 3 && cmd[0] == 'W' && cmd[1] == '1') {
     if (cmd[2] == '+') {
@@ -351,24 +366,6 @@ void processCommand(char *cmd) {
     }
     if (cmd[2] == '-') {
       moveJoint(2, -5);
-      return;
-    }
-  }
-*/
-  // W1+, W1-, W2+, W2- : Wrist motors
-  if (strlen(cmd) == 3 && cmd[0] == 'W' && (cmd[1] == '1' || cmd[1] == '2')) {
-    byte wristIndex = (cmd[1] == '1') ? 1 : 2;
-  Serial.print(F("INFO> cmd2    = "));
-  Serial.println(cmd[2]);
-  Serial.print(F("wristIndex    = "));
-  Serial.println(wristIndex);
-
-    if (cmd[2] == '+') {
-      moveJoint(wristIndex, 5);
-      return;
-    }
-    if (cmd[2] == '-') {
-      moveJoint(wristIndex, -5);
       return;
     }
   }
