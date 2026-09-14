@@ -3,8 +3,8 @@
 
   Servo wiring:
   D3  = Claw
-  D4  = Wrist 1
-  D5  = Wrist 2
+  D4  = Tilt Wrist
+  D5  = Twist Wrist
   D6  = Elbow
   D9  = Arm 1
   D10 = Arm 2 (mirrored: 180 - Arm 1)
@@ -24,8 +24,8 @@
 
 
   C+ / C-     = Claw
-  W1+ / W1-   = Wrist 1
-  W2+ / W2-   = Wrist 2
+  W1+ / W1-   = Tilt Wrist
+  W2+ / W2-   = Twist Wrist
   E+ / E-     = Elbow
   A+ / A-     = Arm 1; Arm 2 mirrors automatically
   B+ / B-     = Base
@@ -33,12 +33,14 @@
 
 /* Include Libraries */
 #include <Servo.h>
+#include <iostream>
+#include <string>
 
 /* Initialize Motors */
 // ---------- Servo objects ----------
 Servo clawServo;    // D3
-Servo wrist1Servo;  // D4
-Servo wrist2Servo;  // D5
+Servo tiltWristServo;   // D4
+Servo twistWristServo;  // D5
 Servo elbowServo;   // D6
 Servo arm1Servo;    // D9
 Servo arm2Servo;    // D10, mirrored with Arm 1
@@ -46,8 +48,8 @@ Servo baseServo;    // D11
 
 // ---------- Pin mapping ----------
 const byte CLAW_PIN = 3;
-const byte WRIST1_PIN = 4;
-const byte WRIST2_PIN = 5;
+const byte TILT_WRIST_PIN = 4;
+const byte TWIST_WRIST_PIN = 5;
 const byte ELBOW_PIN = 6;
 const byte ARM1_PIN = 9;
 const byte ARM2_PIN = 10;
@@ -57,151 +59,103 @@ const int small_movement = 2;
 const int mid_movement = 5;
 const int big_movement = 10;
 
-// ---------- Calibration behavior ----------
-// Pose value order:
-// [0] Claw
-// [1] Wrist 1
-// [2] Wrist 2
-// [3] Elbow
-// [4] Arm 1
-// [5] Base
-const byte POSE_COUNT = 6;
-
 /*
-  Temporary safety limits.
-
+---------- Calibration behavior ----------
   IMPORTANT:
-  These are only starting limits to reduce the risk of crashes.
+  These are limits to reduce the risk of crashes.
   You MUST replace them with safe values measured on your own arm.
 */
-int minAngle[POSE_COUNT] = {
-  100,  // Claw
-  0,  // Wrist 1
-  0,  // Wrist 2
-  10,  // Elbow
-  30,  // Arm 1
-  0   // Base
-};
 
-int maxAngle[POSE_COUNT] = {
-  179,   // Claw
-  90,  // Wrist 1
-  179,  // Wrist 2
-  130,  // Elbow
-  150,  // Arm 1
-  160   // Base
-};
+// Minimum safe angles for each joint
+int clawMinAngle = 100;
+int tiltWristMinAngle = 0;
+int twistWristMinAngle = 0;
+int elbowMinAngle = 10;
+int arm1MinAngle = 30;
+int baseMinAngle = 0;
 
-/*
-  Initial pose.
+// Maximum safe angles for each joint
+int clawMaxAngle = 179;
+int tiltWristMaxAngle = 90;
+int twistWristMaxAngle = 179;
+int elbowMaxAngle = 130;
+int arm1MaxAngle = 150;
+int baseMaxAngle = 160;
 
-  WARNING:
-  This is a placeholder. It may not be safe for your physical arm.
-  During first testing, leave applyPose() commented out in setup().
-*/
-int pose[POSE_COUNT] = {
-  150,  // Claw
-  30,  // Wrist 1
-  90,  // Wrist 2
-  90,  // Elbow
-  40,  // Arm 1
-  80   // Base
-};
+// HOME position angles for each joint (reset position)
+int clawHomeAngle = 150;
+int tiltWristHomeAngle = 50;
+int twistWristHomeAngle = 90;
+int elbowHomeAngle = 90;
+int arm1HomeAngle = 60;
+int baseHomeAngle = 80;
 
+// Initilal joint angles (start at HOME position)
+int clawAngle = clawHomeAngle;
+int tiltWristAngle = tiltWristHomeAngle;
+int twistWristAngle = twistWristHomeAngle;
+int elbowAngle = elbowHomeAngle;
+int arm1Angle = arm1HomeAngle;
+int baseAngle = baseHomeAngle;
+
+// Initiliaze input for serial commands
 char commandBuffer[32];
 byte commandIndex = 0;
 
-// ---------- Helper functions ----------
-
+/* ---------- Functions ---------- */
+// Make sure the joint angles are within the safe limits
 int checkAngleBoundary(int value, int lowLimit, int highLimit) {
   if (value < lowLimit) return lowLimit;
   if (value > highLimit) return highLimit;
   return value;
 }
 
+// Apply the current joint angles to the servos and print the current pose
 void applyPose() {
-  for (byte i = 0; i < POSE_COUNT; i++) {
-    pose[i] = checkAngleBoundary(pose[i], minAngle[i], maxAngle[i]);
-  }
-  clawServo.write(pose[0]);
-  wrist1Servo.write(pose[1]);
-  wrist2Servo.write(pose[2]);
-  elbowServo.write(pose[3]);
-  arm1Servo.write(pose[4]);
-  arm2Servo.write(180 - pose[4]);  // Arm 2 mirrors Arm 1
-  baseServo.write(pose[5]);
+  clawAngle = checkAngleBoundary(clawAngle, clawMinAngle, clawMaxAngle);
+  tiltWristAngle = checkAngleBoundary(tiltWristAngle, tiltWristMinAngle, tiltWristMaxAngle);
+  twistWristAngle = checkAngleBoundary(twistWristAngle, twistWristMinAngle, twistWristMaxAngle);
+  elbowAngle = checkAngleBoundary(elbowAngle, elbowMinAngle, elbowMaxAngle);
+  arm1Angle = checkAngleBoundary(arm1Angle, arm1MinAngle, arm1MaxAngle);
+  baseAngle = checkAngleBoundary(baseAngle, baseMinAngle, baseMaxAngle);
+  clawServo.write(clawAngle);
+  tiltWristServo.write(tiltWristAngle);
+  twistWristServo.write(twistWristAngle);
+  elbowServo.write(elbowAngle);
+  arm1Servo.write(arm1Angle);
+  arm2Servo.write(180 - arm1Angle);  // Arm 2 mirrors Arm 1
+  baseServo.write(baseAngle);
   showPosition();
 }
 
+// Display the current commanded angle for each joint
 void showPosition() {
   Serial.println();
   Serial.println(F("===== CURRENT COMMANDED POSE ====="));
 
   Serial.print(F("Claw    = "));
-  Serial.println(pose[0]);
+  Serial.println(clawAngle);
 
-  Serial.print(F("Wrist 1 = "));
-  Serial.println(pose[1]);
+  Serial.print(F("Tilt Wrist = "));
+  Serial.println(tiltWristAngle);
 
-  Serial.print(F("Wrist 2 = "));
-  Serial.println(pose[2]);
+  Serial.print(F("Twist Wrist = "));
+  Serial.println(twistWristAngle);
 
   Serial.print(F("Elbow   = "));
-  Serial.println(pose[3]);
+  Serial.println(elbowAngle);
 
   Serial.print(F("Arm 1   = "));
-  Serial.println(pose[4]);
+  Serial.println(arm1Angle);
 
   Serial.print(F("Arm 2   = "));
-  Serial.println(180 - pose[4]);
+  Serial.println(180 - arm1Angle);
 
   Serial.print(F("Base    = "));
-  Serial.println(pose[5]);
+  Serial.println(baseAngle);
 }
 
-void showLimits() {
-  Serial.println();
-  Serial.println(F("===== CURRENT SAFETY LIMITS ====="));
-
-  Serial.print(F("Claw:    "));
-  Serial.print(minAngle[0]);
-  Serial.print(F(" to "));
-  Serial.println(maxAngle[0]);
-
-  Serial.print(F("Wrist 1: "));
-  Serial.print(minAngle[1]);
-  Serial.print(F(" to "));
-  Serial.println(maxAngle[1]);
-
-  Serial.print(F("Wrist 2: "));
-  Serial.print(minAngle[2]);
-  Serial.print(F(" to "));
-  Serial.println(maxAngle[2]);
-
-  Serial.print(F("Elbow:   "));
-  Serial.print(minAngle[3]);
-  Serial.print(F(" to "));
-  Serial.println(maxAngle[3]);
-
-  Serial.print(F("Arm 1:   "));
-  Serial.print(minAngle[4]);
-  Serial.print(F(" to "));
-  Serial.println(maxAngle[4]);
-
-  Serial.print(F("Arm 2:   "));
-  Serial.print(180 - maxAngle[4]);
-  Serial.print(F(" to "));
-  Serial.println(180 - minAngle[4]);
-
-  Serial.print(F("Base:    "));
-  Serial.print(minAngle[5]);
-  Serial.print(F(" to "));
-  Serial.println(maxAngle[5]);
-
-  Serial.println(F("================================="));
-  Serial.println();
-}
-
+// Display the available serial commands
 void showHelp() {
   Serial.println();
   Serial.println(F("====== WEEDING ARM CALIBRATION ======"));
@@ -216,8 +170,8 @@ void showHelp() {
   Serial.println();
   Serial.println(F("Move one joint by degrees (relative):"));
   Serial.println(F("  C+ / C-    Claw"));
-  Serial.println(F("  W1+ / W1-  Wrist 1"));
-  Serial.println(F("  W2+ / W2-  Wrist 2"));
+  Serial.println(F("  W1+ / W1-  Tilt Wrist"));
+  Serial.println(F("  W2+ / W2-  Twist Wrist"));
   Serial.println(F("  E+ / E-    Elbow"));
   Serial.println(F("  A+ / A-    Arm 1; Arm 2 mirrors automatically"));
   Serial.println(F("  B+ / B-    Base"));
@@ -227,74 +181,76 @@ void showHelp() {
   Serial.println();
 }
 
+// Move all joints to their saved HOME angles
 void goHome() {
-  // Replace these six numbers after you have calibrated your real HOME pose.
-  pose[0] = 150;   // Claw
-  pose[1] = 50;   // Wrist 1
-  pose[2] = 90;   // Wrist 2
-  pose[3] = 90;   // Elbow
-  pose[4] = 60;  // Arm 1; Arm 2 is 180 - Arm 1
-  pose[5] = 80;   // Base
+  clawAngle = clawHomeAngle;
+  tiltWristAngle = tiltWristHomeAngle;
+  twistWristAngle = twistWristHomeAngle;
+  elbowAngle = elbowHomeAngle;
+  arm1Angle = arm1HomeAngle;
+  baseAngle = baseHomeAngle;
 
   applyPose();
 
   Serial.println(F("Moved to HOME pose."));
 }
 
-void moveJoint(byte poseIndex, int direction) {
-  pose[poseIndex] += direction;
-  applyPose();
-
-  Serial.print(F("Moved "));
-  switch (poseIndex) {
-    case 0: Serial.println(F("Claw")); break;
-    case 1: Serial.println(F("Wrist 1")); break;
-    case 2: Serial.println(F("Wrist 2")); break;
-    case 3: Serial.println(F("Elbow")); break;
-    case 4: Serial.println(F("Arm 1 and mirrored Arm 2")); break;
-    case 5: Serial.println(F("Base")); break;
+// Move one joint by a relative number of degrees
+void moveJoint(std::string jointName, int direction) {
+  if (jointName == "claw") {
+    clawAngle += direction;
+  } else if (jointName == "tiltWrist") {
+    tiltWristAngle += direction;
+  } else if (jointName == "twistWrist") {
+    twistWristAngle += direction;
+  } else if (jointName == "elbow") {
+    elbowAngle += direction;
+  } else if (jointName == "arm1") {
+    arm1Angle += direction;
+  } else if (jointName == "base") {
+    baseAngle += direction;
+  } else {
+    Serial.println(F("Unknown joint name."));
+    return;
   }
+
+  applyPose();
 }
 
+// Turn one joint to a specific angle, and wait
+// Specify 0 for delay_ms to skip the wait
 void turn_motor(int motor_index, int angle, int delay_ms) {
-  pose[motor_index] = angle;
+  switch (motor_index) {
+    case 0: clawAngle = angle; break;
+    case 1: tiltWristAngle = angle; break;
+    case 2: twistWristAngle = angle; break;
+    case 3: elbowAngle = angle; break;
+    case 4: arm1Angle = angle; break;
+    case 5: baseAngle = angle; break;
+  }
   applyPose();
   delay(delay_ms);
 }
 
-void processCommand(char *cmd) {
-  if (strcmp(cmd, "HELP") == 0) {
-    showHelp();
-    return;
-  }
-
-  if (strcmp(cmd, "SHOW") == 0) {
-    showPosition();
-    return;
-  }
-
-  if (strcmp(cmd, "LIMITS") == 0) {
-    showLimits();
-    return;
-  }
-
-  if (strcmp(cmd, "TEST") == 0) {
+// Move all joints to their saved "FLOWER" angles
+void doActionFlower() {
     int sleep_time = 1000;
-    turn_motor(5, 30, sleep_time);
-    turn_motor(5, 140, sleep_time);
     turn_motor(5, 80, sleep_time);
-    return;
-  }
+    turn_motor(4, 140, sleep_time);
+    turn_motor(3, 70, sleep_time);
+    turn_motor(1, 10, sleep_time);
+    turn_motor(2, 90, sleep_time);
+    turn_motor(0, 110, sleep_time);
+    turn_motor(2, 155, sleep_time);
+    turn_motor(4, 60, sleep_time);
+    turn_motor(5, 160, sleep_time);
+    turn_motor(1, 160, sleep_time);
+    turn_motor(4, 120, sleep_time);
+    turn_motor(0, 150, sleep_time);
+}
 
-  if (strcmp(cmd, "WAKEUP") == 0) {
-    // Pose value order:
-    // [0] Claw
-    // [1] Wrist 1
-    // [2] Wrist 2
-    // [3] Elbow
-    // [4] Arm 1
-    // [5] Base
-
+// Move all joints to their saved "WAKEUP" angles
+void doActionWakeup() {
     int sleep_time = 1000;
     turn_motor(4, 70, sleep_time);
     turn_motor(4, 30, sleep_time);
@@ -313,42 +269,36 @@ void processCommand(char *cmd) {
     turn_motor(2, 175, 0);
     turn_motor(2, 5, 0);
     turn_motor(2, 90, 0);
+}
+
+// Interpret and execute a command received over Serial
+void processCommand(char *cmd) {
+  if (strcmp(cmd, "HELP") == 0) {
+    showHelp();
+    return;
+  }
+
+  if (strcmp(cmd, "SHOW") == 0) {
+    showPosition();
+    return;
+  }
+
+  if (strcmp(cmd, "TEST") == 0) {
+    int sleep_time = 1000;
+    turn_motor(5, 30, sleep_time);
+    turn_motor(5, 140, sleep_time);
+    turn_motor(5, 80, sleep_time);
+    return;
+  }
+
+  if (strcmp(cmd, "WAKEUP") == 0) {
+    doActionWakeup();
     return;
   }
 
   if (strcmp(cmd, "FLOWER") == 0) {
-    /*
-10:35:47.750 -> ===== CURRENT COMMANDED POSE =====
-10:35:47.783 -> Claw    = 150
-10:35:47.783 -> Wrist 1 = 10
-10:35:47.815 -> Wrist 2 = 90
-10:35:47.815 -> Elbow   = 70
-10:35:47.852 -> Arm 1   = 140
-10:35:47.852 -> Arm 2   = 40
-10:35:47.888 -> Base    = 80
-    */
-    // Pose value order:
-    // [0] Claw
-    // [1] Wrist 1
-    // [2] Wrist 2
-    // [3] Elbow
-    // [4] Arm 1
-    // [5] Base
-
-    int sleep_time = 1000;
-    turn_motor(5, 80, sleep_time);
-    turn_motor(4, 140, sleep_time);
-    turn_motor(3, 70, sleep_time);
-    turn_motor(1, 10, sleep_time);
-    turn_motor(2, 90, sleep_time);
-    turn_motor(0, 110, sleep_time);
-    turn_motor(2, 155, sleep_time);
-    turn_motor(4, 60, sleep_time);
-    turn_motor(5, 160, sleep_time);
-    turn_motor(1, 160, sleep_time);
-    turn_motor(4, 120, sleep_time);
-    turn_motor(0, 150, sleep_time);
-    
+    doActionFlower();
+    return;
   }
 
   if (strcmp(cmd, "HOME") == 0 || strcmp(cmd, "SLEEP") == 0) {
@@ -359,35 +309,35 @@ void processCommand(char *cmd) {
   // C+ or C- : Claw
   if (strlen(cmd) == 2 && cmd[0] == 'C') {
     if (cmd[1] == '+') {
-      moveJoint(0, mid_movement);
+      moveJoint("claw", mid_movement);
       return;
     }
     if (cmd[1] == '-') {
-      moveJoint(0, mid_movement * -1);
+      moveJoint("claw", mid_movement * -1);
       return;
     }
   }
 
-  // W1+ or W1- : Wrist 1
-  if (strlen(cmd) == 3 && cmd[0] == 'W' && cmd[1] == '1') {
+  // TI+ or TI- : Tilt Wrist
+  if (strlen(cmd) == 3 && cmd[0] == 'T' && cmd[1] == 'I') {
     if (cmd[2] == '+') {
-      moveJoint(1, mid_movement);
+      moveJoint("tiltWrist", mid_movement);
       return;
     }
     if (cmd[2] == '-') {
-      moveJoint(1, mid_movement * -1);
+      moveJoint("tiltWrist", mid_movement * -1);
       return;
     }
   }
 
-  // W2+ or W2- : Wrist 2
-  if (strlen(cmd) == 3 && cmd[0] == 'W' && cmd[1] == '2') {
+  // TW+ or TW- : Twist Wrist
+  if (strlen(cmd) == 3 && cmd[0] == 'T' && cmd[1] == 'W') {
     if (cmd[2] == '+') {
-      moveJoint(2, mid_movement);
+      moveJoint("twistWrist", mid_movement);
       return;
     }
     if (cmd[2] == '-') {
-      moveJoint(2, mid_movement * -1);
+      moveJoint("twistWrist", mid_movement * -1);
       return;
     }
   }
@@ -395,11 +345,11 @@ void processCommand(char *cmd) {
   // E+ or E- : Elbow
   if (strlen(cmd) == 2 && cmd[0] == 'E') {
     if (cmd[1] == '+') {
-      moveJoint(3, 10);
+      moveJoint("elbow", 10);
       return;
     }
     if (cmd[1] == '-') {
-      moveJoint(3, -10);
+      moveJoint("elbow", -10);
       return;
     }
   }
@@ -407,11 +357,11 @@ void processCommand(char *cmd) {
   // A+ or A- : Arm 1 + Arm 2 mirror
   if (strlen(cmd) == 2 && cmd[0] == 'A') {
     if (cmd[1] == '+') {
-      moveJoint(4, big_movement);
+      moveJoint("arm1", big_movement);
       return;
     }
     if (cmd[1] == '-') {
-      moveJoint(4, big_movement * -1);
+      moveJoint("arm1", big_movement * -1);
       return;
     }
   }
@@ -419,11 +369,11 @@ void processCommand(char *cmd) {
   // B+ or B- : Base
   if (strlen(cmd) == 2 && cmd[0] == 'B') {
     if (cmd[1] == '+') {
-      moveJoint(5, big_movement);
+      moveJoint("base", big_movement);
       return;
     }
     if (cmd[1] == '-') {
-      moveJoint(5, big_movement * -1);
+      moveJoint("base", big_movement * -1);
       return;
     }
   }
@@ -431,11 +381,12 @@ void processCommand(char *cmd) {
   Serial.println(F("Unknown command. Type HELP."));
 }
 
+// Start Serial communication and attach all servos
 void setup() {
   Serial.begin(9600);
   clawServo.attach(CLAW_PIN);
-  wrist1Servo.attach(WRIST1_PIN);
-  wrist2Servo.attach(WRIST2_PIN);
+  tiltWristServo.attach(TILT_WRIST_PIN);
+  twistWristServo.attach(TWIST_WRIST_PIN);
   elbowServo.attach(ELBOW_PIN);
   arm1Servo.attach(ARM1_PIN);
   arm2Servo.attach(ARM2_PIN);
@@ -451,7 +402,7 @@ void setup() {
     to the temporary example pose.
 
     After you have calibrated a verified safe HOME pose:
-    1. Replace pose[] values with your HOME values.
+    1. Replace the six joint angle variables with your HOME values.
     2. Replace goHome() values with the same HOME values.
     3. Remove the two slashes below to enXX`lable applyPose().
   */
@@ -466,23 +417,25 @@ void setup() {
 
 }
 
+// Read complete commands from Serial and process them
 void loop() {
   while (Serial.available() > 0) {
+    // Read the incoming input:
     char received = Serial.read();
 
+    // Carritage return is ignored, only newline is used to terminate commands
     if (received == '\r') {
       continue;
     }
 
+    // Newline indicates start parsing command
     if (received == '\n') {
       commandBuffer[commandIndex] = '\0';
       processCommand(commandBuffer);
       commandIndex = 0;
+    // If command buffer is not full, add character to buffer
     } else if (commandIndex < sizeof(commandBuffer) - 1) {
       commandBuffer[commandIndex++] = received;
-    } else {
-      commandIndex = 0;
-      Serial.println(F("Command too long. Cleared. Type HELP."));
     }
   }
 }
