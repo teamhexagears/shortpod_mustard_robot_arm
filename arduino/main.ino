@@ -33,8 +33,6 @@
 
 /* Include Libraries */
 #include <Servo.h>
-#include <iostream>
-#include <string>
 
 /* Initialize Motors */
 // ---------- Servo objects ----------
@@ -196,18 +194,18 @@ void goHome() {
 }
 
 // Move one joint by a relative number of degrees
-void moveJoint(std::string jointName, int direction) {
-  if (jointName == "claw") {
+void moveJoint(const char *jointName, int direction) {
+  if (strcmp(jointName, "claw") == 0) {
     clawAngle += direction;
-  } else if (jointName == "tiltWrist") {
+  } else if (strcmp(jointName, "tiltWrist") == 0) {
     tiltWristAngle += direction;
-  } else if (jointName == "twistWrist") {
+  } else if (strcmp(jointName, "twistWrist") == 0) {
     twistWristAngle += direction;
-  } else if (jointName == "elbow") {
+  } else if (strcmp(jointName, "elbow") == 0) {
     elbowAngle += direction;
-  } else if (jointName == "arm1") {
+  } else if (strcmp(jointName, "arm1") == 0) {
     arm1Angle += direction;
-  } else if (jointName == "base") {
+  } else if (strcmp(jointName, "base") == 0) {
     baseAngle += direction;
   } else {
     Serial.println(F("Unknown joint name."));
@@ -219,14 +217,22 @@ void moveJoint(std::string jointName, int direction) {
 
 // Turn one joint to a specific angle, and wait
 // Specify 0 for delay_ms to skip the wait
-void turn_motor(int motor_index, int angle, int delay_ms) {
-  switch (motor_index) {
-    case 0: clawAngle = angle; break;
-    case 1: tiltWristAngle = angle; break;
-    case 2: twistWristAngle = angle; break;
-    case 3: elbowAngle = angle; break;
-    case 4: arm1Angle = angle; break;
-    case 5: baseAngle = angle; break;
+void turnMotor(const char *jointName, int angle, int delay_ms) {
+  if (strcmp(jointName, "claw") == 0) {
+    clawAngle = angle;
+  } else if (strcmp(jointName, "tiltWrist") == 0) {
+    tiltWristAngle = angle;
+  } else if (strcmp(jointName, "twistWrist") == 0) {
+    twistWristAngle = angle;
+  } else if (strcmp(jointName, "elbow") == 0) {
+    elbowAngle = angle;
+  } else if (strcmp(jointName, "arm1") == 0) {
+    arm1Angle = angle;
+  } else if (strcmp(jointName, "base") == 0) {
+    baseAngle = angle;
+  } else {
+    Serial.println(F("Unknown joint name."));
+    return;
   }
   applyPose();
   delay(delay_ms);
@@ -235,40 +241,40 @@ void turn_motor(int motor_index, int angle, int delay_ms) {
 // Move all joints to their saved "FLOWER" angles
 void doActionFlower() {
     int sleep_time = 1000;
-    turn_motor(5, 80, sleep_time);
-    turn_motor(4, 140, sleep_time);
-    turn_motor(3, 70, sleep_time);
-    turn_motor(1, 10, sleep_time);
-    turn_motor(2, 90, sleep_time);
-    turn_motor(0, 110, sleep_time);
-    turn_motor(2, 155, sleep_time);
-    turn_motor(4, 60, sleep_time);
-    turn_motor(5, 160, sleep_time);
-    turn_motor(1, 160, sleep_time);
-    turn_motor(4, 120, sleep_time);
-    turn_motor(0, 150, sleep_time);
+    turnMotor("base", 80, sleep_time);
+    turnMotor("arm1", 140, sleep_time);
+    turnMotor("elbow", 70, sleep_time);
+    turnMotor("tiltWrist", 10, sleep_time);
+    turnMotor("twistWrist", 90, sleep_time);
+    turnMotor("claw", 110, sleep_time);
+    turnMotor("twistWrist", 155, sleep_time);
+    turnMotor("arm1", 60, sleep_time);
+    turnMotor("base", 160, sleep_time);
+    turnMotor("tiltWrist", 160, sleep_time);
+    turnMotor("arm1", 120, sleep_time);
+    turnMotor("claw", 150, sleep_time);
 }
 
 // Move all joints to their saved "WAKEUP" angles
 void doActionWakeup() {
     int sleep_time = 1000;
-    turn_motor(4, 70, sleep_time);
-    turn_motor(4, 30, sleep_time);
-    turn_motor(4, 60, sleep_time);
-    turn_motor(5, 30, sleep_time);
-    turn_motor(5, 140, sleep_time);
-    turn_motor(5, 80, sleep_time);
-    turn_motor(3, 100, sleep_time);
-    turn_motor(3, 50, sleep_time);
-    turn_motor(1, 70, sleep_time);
-    turn_motor(1, 0, sleep_time);
-    turn_motor(0, 170, sleep_time);
-    turn_motor(0, 110, sleep_time);
-    turn_motor(2, 175, 0);
-    turn_motor(2, 5, 0);
-    turn_motor(2, 175, 0);
-    turn_motor(2, 5, 0);
-    turn_motor(2, 90, 0);
+    turnMotor("arm1", 70, sleep_time);
+    turnMotor("arm1", 40, sleep_time);
+    turnMotor("arm1", 60, sleep_time);
+    turnMotor("base", 30, sleep_time);
+    turnMotor("base", 140, sleep_time);
+    turnMotor("base", 80, sleep_time);
+    turnMotor("elbow", 100, sleep_time);
+    turnMotor("elbow", 50, sleep_time);
+    turnMotor("tiltWrist", 70, sleep_time);
+    turnMotor("tiltWrist", 0, sleep_time);
+    turnMotor("claw", 170, sleep_time);
+    turnMotor("claw", 115, sleep_time);
+    turnMotor("twistWrist", 175, 0);
+    turnMotor("twistWrist", 5, 0);
+    turnMotor("twistWrist", 175, 0);
+    turnMotor("twistWrist", 5, 0);
+    turnMotor("twistWrist", 90, 0);
 }
 
 // Interpret and execute a command received over Serial
@@ -285,9 +291,9 @@ void processCommand(char *cmd) {
 
   if (strcmp(cmd, "TEST") == 0) {
     int sleep_time = 1000;
-    turn_motor(5, 30, sleep_time);
-    turn_motor(5, 140, sleep_time);
-    turn_motor(5, 80, sleep_time);
+    turnMotor("base", 30, sleep_time);
+    turnMotor("base", 140, sleep_time);
+    turnMotor("base", 80, sleep_time);
     return;
   }
 
@@ -391,6 +397,7 @@ void setup() {
   arm1Servo.attach(ARM1_PIN);
   arm2Servo.attach(ARM2_PIN);
   baseServo.attach(BASE_PIN);
+  Serial.println(F("INFO> Running Setup"));
 
   /*
     FIRST TEST SAFETY:
@@ -406,15 +413,11 @@ void setup() {
     2. Replace goHome() values with the same HOME values.
     3. Remove the two slashes below to enXX`lable applyPose().
   */
+  applyPose();
 
-  //applyPose();
-  goHome();
-  
   Serial.println(F("Smart Weeding Arm Calibration Ready"));
   showHelp();
-  showPosition();
   Serial.println(F("INFO> Init Setup Completed"));
-
 }
 
 // Read complete commands from Serial and process them
