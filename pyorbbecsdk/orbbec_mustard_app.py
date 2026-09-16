@@ -24,7 +24,14 @@ from pyorbbecsdk import (
     Pipeline,
 )
 
-from mustard_ai_model.detect_mustard import MustardDetector
+from detect_mustard import MustardDetector
+from arm_kinematics import ArmGeometry, ServoCalibration, solve
+
+# Replace these placeholder dimensions with measurements from the real arm.
+ARM_BASE_HEIGHT_MM = 110.0
+ARM_UPPER_ARM_MM = 200.0
+ARM_FOREARM_MM = 180.0
+ARM_WRIST_MM = 100.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,15 +41,61 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iou", type=float, default=0.7)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--serial-port", type=str, default=None, help="Arduino serial port, for example COM5")
+    parser.add_argument("--baudrate", type=int, default=9600)
+    parser.add_argument("--enable-motion", action="store_true", help="Allow IK pose commands to move the arm")
+    parser.add_argument("--wrist-pitch-deg", type=float, default=0.0)
+    parser.add_argument("--camera-x-offset-mm", type=float, default=0.0)
+    parser.add_argument("--camera-y-offset-mm", type=float, default=0.0)
+    parser.add_argument("--camera-z-offset-mm", type=float, default=0.0)
     parser.add_argument("--window-name", type=str, default="Mustard Detector", help="OpenCV window title")
     return parser.parse_args()
 
 
 class OrbbecMustardApp:
-    def __init__(self, weights: str | None = None, conf: float = 0.90, iou: float = 0.7, imgsz: int = 640, device: str = "cpu"):
+    def __init__(self, weights: str | None = None, conf: float = 0.90, iou: float = 0.7, imgsz: int = 640, device: str = "cpu", serial_port: str | None = None, baudrate: int = 9600, enable_motion: bool = False, geometry: ArmGeometry | None = None, camera_offsets: tuple[float, float, float] = (0.0, 0.0, 0.0)):
         self.detector = MustardDetector(model_path=weights, conf=conf, iou=iou, imgsz=imgsz, device=device)
         self.pipeline = None
         self.align_filter = AlignFilter(align_to_stream=OBStreamType.COLOR_STREAM)
+        self.serial_port = None
+        self.last_target = None
+        self.last_target_time = 0.0
+        self.enable_motion = enable_motion
+        self.geometry = geometry
+        self.calibration = ServoCalibration()
+        self.camera_offsets = camera_offsets
+        if serial_port is not None:
+            try:
+                import serial
+            except ImportError as exc:
+                raise RuntimeError("Install pyserial to use --serial-port: python -m pip install pyserial") from exc
+            self.serial_port = serial.Serial(serial_port, baudrate=baudrate, timeout=1)
+
+    def send_target(self, xyz) -> None:
+        """Send camera coordinates, and optionally the corresponding IK pose."""
+        if self.serial_port is None:
+            return
+
+        now = cv2.getTickCount() / cv2.getTickFrequency()
+        if now - self.last_target_time < 0.25:
+            return
+        target = tuple(int(round(value)) for value in xyz)
+        if self.last_target is not None and max(abs(a - b) for a, b in zip(target, self.last_target)) < 5:
+            return
+        self.serial_port.write(f"TARGET {target[0]} {target[1]} {target[2]}\n".encode("ascii"))
+        if self.enable_motion:
+            if self.geometry is None:
+                raise RuntimeError("Arm geometry is required when --enable-motion is used")
+            camera_x, camera_y, camera_z = target
+            base_target = (
+                camera_z + self.camera_offsets[0],
+                -camera_x + self.camera_offsets[1],
+                -camera_y + self.camera_offsets[2],
+            )
+            pose = solve(*base_target, self.geometry, self.calibration)
+            self.serial_port.write(("POSE " + " ".join(str(angle) for angle in pose) + "\n").encode("ascii"))
+        self.last_target = target
+        self.last_target_time = now
 
     def start(self) -> None:
         try:
@@ -61,6 +114,9 @@ class OrbbecMustardApp:
         if self.pipeline is not None:
             self.pipeline.stop()
             self.pipeline = None
+        if self.serial_port is not None:
+            self.serial_port.close()
+            self.serial_port = None
 
     def run(self, window_name: str = "Mustard Detector") -> None:
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
@@ -118,6 +174,7 @@ class OrbbecMustardApp:
                     xyz = self._get_xyz(depth_frame, x1, y1, x2, y2)
                     if xyz is not None:
                         x_mm, y_mm, z_mm = xyz
+                        self.send_target(xyz)
                         label = f"X:{x_mm:.0f} Y:{y_mm:.0f} Z:{z_mm:.0f} mm"
                         cv2.putText(
                             display,
@@ -190,12 +247,24 @@ class OrbbecMustardApp:
 
 def main() -> None:
     args = parse_args()
+    geometry = ArmGeometry(
+        base_height_mm=ARM_BASE_HEIGHT_MM,
+        upper_arm_mm=ARM_UPPER_ARM_MM,
+        forearm_mm=ARM_FOREARM_MM,
+        wrist_mm=ARM_WRIST_MM,
+        wrist_pitch_deg=args.wrist_pitch_deg,
+    )
     app = OrbbecMustardApp(
         weights=args.weights,
         conf=args.conf,
         iou=args.iou,
         imgsz=args.imgsz,
         device=args.device,
+        serial_port=args.serial_port,
+        baudrate=args.baudrate,
+        enable_motion=args.enable_motion,
+        geometry=geometry,
+        camera_offsets=(args.camera_x_offset_mm, args.camera_y_offset_mm, args.camera_z_offset_mm),
     )
 
     try:
