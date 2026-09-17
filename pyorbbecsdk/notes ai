@@ -1,0 +1,75 @@
+Robot arm details
+
+Arm model and number of joints:  custom-made arm, 5 joints
+Coordinate convention: origin location, axis directions, units:
+motor1:base motor move arm left and right 
+motor2:armmove up annd down
+motor3: elbow up and down
+motor4:wrist move claw up and down
+motor5: wrist that rotate claw 
+Arduino board and motor/servo drivers: arduino uno r3 we use Servo.h library
+How the arm currently receives commands: idk
+
+Camera setup
+
+Orbbec camera model: orbecc gemini 330 series
+Camera mounting position: fixed, overhead, wrist-mounted, etc.: fixed, 20 cm to the left of the base motor
+Camera resolution and depth mode: 1706 × 960 pixels im not sure what is depth mode
+Distance from camera to the robot base:20 cm to the left of the base motor
+
+Calibration information
+
+Robot base coordinate origin :idk
+Whether you need simple planar coordinates or full 3D positioning : full 3d positioning
+Required accuracy, such as ±2 mm or ±10 mm : we'll adjust that laterCurrent Arduino communication
+
+Arduino .ino file:/home/admin/git/shortpod_mustard_robot_arm/arduino/main.ino
+Preferred protocol: USB serial
+Desired message format, for example:i don't know
+Whether the Arduino should acknowledge receipt:no
+
+Detection requirements
+Which point should represent the plant: stem
+Whether coordinates should be sent continuously or only when detection is stable: when detection stable
+What should happen when confidence is low or depth is unavailable: do nothing
+
+================================
+Arm dimensions
+
+Height of the base rotation axis from the table :6 cm
+Length from shoulder to elbow: 22 cm
+Length from elbow to wrist:15cm
+Length from wrist to claw: 7cm
+Physical limits of every joint
+Servo zero angle for every joint
+
+int clawMinAngle = 100;
+int tiltWristMinAngle = 0;
+int twistWristMinAngle = 0;
+int elbowMinAngle = 10;
+int arm1MinAngle = 30;
+int baseMinAngle = 0;
+
+Clarify the servo arrangement
+
+motor1 = base
+motor2&3 = arm 1 arm2
+motor4  =  elbow
+motor5 = tiltWrist
+motor6= twistWrist
+motor7= claw
+
+Camera orientation
+
+“20 cm to the left” gives position but not orientation. We also need:
+
+Camera height above the robot base: 21 cm
+Whether the camera points straight down or is tilted: point straiight forward
+Camera lens direction relative to the robot: same directions
+A photo or sketch showing camera, base, table, and axes
+Coordinate convention: uploded as attachment
+
+Define robot coordinates: idk what you need
+
+====================================
+corection camra resolution is 1706 × 960
