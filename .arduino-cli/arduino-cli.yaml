@@ -1,0 +1,6 @@
+directories:
+    data: /home/admin/git/shortpod_mustard_robot_arm/.arduino-cli/data
+    downloads: /home/admin/.arduino-cli-shared/downloads
+    user: /home/admin/git/shortpod_mustard_robot_arm/.arduino-cli/user
+network:
+    connection_timeout: 600s
