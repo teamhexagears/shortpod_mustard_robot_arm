@@ -1,0 +1,11 @@
+# Arduino CLI 项目本地配置
+# 自动生成，所有数据存储在项目目录中
+
+directories:
+  user: "/home/admin/git/shortpod_mustard_robot_arm/.arduino-cli/user"
+  data: "/home/admin/git/shortpod_mustard_robot_arm/.arduino-cli/data"
+  downloads: "/home/admin/.arduino-cli-shared/downloads"
+
+network:
+  connection_timeout: 600s
+

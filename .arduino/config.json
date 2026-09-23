@@ -1,0 +1,9 @@
+{
+  "port": "/dev/ttyACM0",
+  "board": "arduino:avr:uno",
+  "project": {
+    "initialized": true,
+    "version": 1,
+    "initializedAt": "2026-09-23T07:02:15.967Z"
+  }
+}
