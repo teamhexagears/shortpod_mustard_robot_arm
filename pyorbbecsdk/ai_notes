@@ -73,3 +73,54 @@ Define robot coordinates: idk what you need
 
 ====================================
 corection camra resolution is 1706 × 960
+Information still missing
+
+Camera orientation
+“Points straight forward” is not enough to calculate its rotation. We need to know:
+
+Is the camera looking horizontally or downward?
+horizontally 
+Is it level with the table or tilted downward?
+it is leved with the table
+Is its image top aligned with robot-forward?
+yes
+Is the camera mounted on the left side looking toward the robot?
+no the camera is mounted right in front of the robot
+
+Servo limits
+The listed values are only minimum angles. We also need maximum angles:you can get the minimum and maximum angle from arduino/main.ino 
+
+
+
+
+Joint structure
+You described seven motors but initially described five joints. Please confirm:
+i was wrong it's six joints, motors 2 and 3 move together as one joint(arm),
+
+Is motor 5 only wrist pitch?
+yes
+Is motor 6 only wrist rotation?
+yes
+Is motor 7 the claw open/close servo?
+yes
+
+Calibration measurements
+Even with the dimensions, we should not calculate the camera transform from the stated camera distance alone. We need at least six measured calibration points:
+calibration 1:
+| *Calibration Iteration Number* | *Camera Positions(x,y,z)* | *Motor positions (6 numbers, each representing a joint from base to claw)* |
+| 1 | -167, -54, 237 | 10, 150, 30, 90, 5, 150 |
+| 2 | -106, 30, 165 | 20, 140, 80, 90, 5, 150 |
+| 3 | -58, -47, 229 | 25, 140, 50, 90, 5, 150 |
+| 4 | 30, -29, 191 | 40, 150, 60, 90, 5, 150 |
+| 5 | 111, -54, 170 | 55, 140, 60, 90, 5, 150 |
+| 6 | 78, -34, 202 | 50, 150, 50, 90, 5, 150 |
+The points should be spread throughout the robot’s workspace and measured in millimeters.
+
+The most useful next item is a sketch showing the robot base, camera, table, and arrows for +X, +Y, and +Z. Also, I do not currently see the referenced coordinate diagram attached.
+i will attach a photo to you, tell me if it dosen't make any sense
+=========================
+uploaded 3 photos, under images directory, named: IMG_6519.JPG(servo joints and directions), IMG_6521.JPG(top view), IMG_6522.JPG (side view)
+Please write the exact kinematics math for my arm
+
+=========================
+For details on the math for kinematics according to AI, refer to images directory

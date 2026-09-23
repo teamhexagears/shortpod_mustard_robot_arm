@@ -18,7 +18,7 @@
   HELP
   SHOW
   LIMITS
-  HOMEactual servo max angles from the Arduino sketch
+  HOME
   WAKEUP
   TEST
 
