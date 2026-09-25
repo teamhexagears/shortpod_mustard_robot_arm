@@ -69,6 +69,9 @@ CURRENT_POSE = {
     "claw": 150.0,
 }
 
+MAX_TARGET_Z_MM = 600.0
+DETECTION_WAIT_SECONDS = 5.0
+
 
 def fk(q):
     q1, q2, q3, q4 = q
@@ -142,7 +145,7 @@ def q_to_pose_deg(q):
         "claw": CURRENT_POSE["claw"],
     }
     for name, (lo, hi) in JOINT_LIMITS.items():
-        pose[name] = float(np.clip(pose[name], lo, hi))
+        pose[name] = int(round(np.clip(pose[name], lo, hi)))
     return pose
 
 
@@ -157,7 +160,8 @@ def depth_to_camera_xyz(depth_frame, x_px, y_px):
     x = max(0, min(w - 1, x))
     y = max(0, min(h - 1, y))
 
-    z_mm = float(depth_map[y, x] * depth_frame.get_depth_scale() * 1000.0)
+    # Orbbec's depth scale converts the raw value directly to millimeters.
+    z_mm = float(depth_map[y, x] * depth_frame.get_depth_scale())
     if not np.isfinite(z_mm) or z_mm <= 0:
         return None
 
@@ -177,10 +181,8 @@ def camera_to_robot(camera_xyz):
     return R @ camera_xyz + t
 
 
-def send_move(port, baud, pose):
-    ser = serial.Serial(port, baud, timeout=1)
-    time.sleep(2)
-    cmd = "MOVE {} {} {} {} {} {}".format(
+def build_move_command(pose):
+    return "MOVE {} {} {} {} {} {}".format(
         int(round(pose["base"])),
         int(round(pose["arm1"])),
         int(round(pose["elbow"])),
@@ -188,7 +190,13 @@ def send_move(port, baud, pose):
         int(round(pose["twistWrist"])),
         int(round(pose["claw"])),
     )
-    print("Sending:", cmd)
+
+
+def send_move(port, baud, pose):
+    cmd = build_move_command(pose)
+    print("Arduino MOVE command:", cmd, flush=True)
+    ser = serial.Serial(port, baud, timeout=1)
+    time.sleep(2)
     ser.write((cmd + "\n").encode("ascii"))
     time.sleep(0.3)
     ser.close()
@@ -203,6 +211,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iou", type=float, default=0.7, help="NMS IoU threshold")
     parser.add_argument("--imgsz", type=int, default=640, help="Model image size")
     parser.add_argument("--device", type=str, default="cpu", help="Model device")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print low-confidence detections and camera/depth/IK diagnostics",
+    )
     return parser.parse_args()
 
 
@@ -218,29 +231,66 @@ def main():
     config.enable_stream(depth_profiles.get_default_video_stream_profile())
     pipeline.start(config)
     align = AlignFilter(align_to_stream=OBStreamType.COLOR_STREAM)
+    frame_number = 0
 
     try:
         while True:
+            frame_number += 1
             frames = pipeline.wait_for_frames(1000)
             if frames is None:
+                if args.debug:
+                    print(f"[debug] frame {frame_number}: no frames", flush=True)
                 continue
             frames = align.process(frames)
             if frames is None:
+                #if args.debug:
+                #    print(f"[debug] frame {frame_number}: alignment failed", flush=True)
                 continue
 
             color_frame = frames.get_color_frame()
             depth_frame = frames.get_depth_frame()
             if color_frame is None or depth_frame is None:
+                if args.debug:
+                    print(
+                        f"[debug] frame {frame_number}: missing color/depth frame "
+                        f"(color={color_frame is not None}, depth={depth_frame is not None})",
+                        flush=True,
+                    )
                 continue
 
             bgr = frame_to_bgr_image(color_frame)
             if bgr is None:
+                if args.debug:
+                    print(f"[debug] frame {frame_number}: color conversion failed", flush=True)
                 continue
 
-            results = detector.model(bgr, conf=detector.conf, iou=detector.iou, imgsz=detector.imgsz, verbose=False)
+            inference_conf = 0.05 if args.debug else detector.conf
+            results = detector.model(
+                bgr,
+                conf=inference_conf,
+                iou=detector.iou,
+                imgsz=detector.imgsz,
+                device=detector.device,
+                verbose=False,
+            )
             result = results[0]
 
             if result.boxes is not None and len(result.boxes) > 0:
+                if args.debug:
+                    confidences = result.boxes.conf.cpu().numpy()
+                    #print(
+                    #    f"[debug] frame {frame_number}: {len(result.boxes)} detection(s), "
+                    #    f"confidence range {confidences.min():.3f}-{confidences.max():.3f}",
+                    #    flush=True,
+                    #)
+                    for index, box in enumerate(result.boxes):
+                        coords = [round(value, 1) for value in box.xyxy[0].tolist()]
+                        # print(
+                        #     f"[debug]   box {index}: conf={float(box.conf[0]):.3f}, "
+                        #     f"xyxy={coords}",
+                        #     flush=True,
+                        # )
+
                 best = result.boxes[int(np.argmax(result.boxes.conf.cpu().numpy()))]
                 x1, y1, x2, y2 = map(float, best.xyxy[0].tolist())
 
@@ -249,23 +299,47 @@ def main():
 
                 camera_xyz = depth_to_camera_xyz(depth_frame, x_center, y_bottom)
                 if camera_xyz is None:
-                    print("Depth unavailable at stem target")
+                    print(
+                        f"Depth unavailable at stem target pixel ({x_center:.1f}, {y_bottom:.1f})",
+                        flush=True,
+                    )
+                    continue
+
+                if camera_xyz[2] > MAX_TARGET_Z_MM:
+                    print(
+                        f"Target Z {camera_xyz[2]:.1f} mm exceeds maximum "
+                        f"{MAX_TARGET_Z_MM:.1f} mm; skipping target.",
+                        flush=True,
+                    )
                     continue
 
                 robot_xyz = camera_to_robot(camera_xyz)
                 q = ik_point(robot_xyz)
                 pose = q_to_pose_deg(q)
+                command = build_move_command(pose)
+                ik_error_mm = float(np.linalg.norm(fk(q) - robot_xyz))
 
+                print(f"detection_confidence: {float(best.conf[0]):.3f}")
+                print(f"stem_pixel: ({x_center:.1f}, {y_bottom:.1f}, {camera_xyz[2]:.1f})")
                 print("camera_xyz:", np.round(camera_xyz, 2))
                 print("robot_xyz:", np.round(robot_xyz, 2))
+                print(f"ik_error_mm: {ik_error_mm:.2f}")
                 print("pose_deg:", pose)
+                print("Arduino MOVE command:", command, flush=True)
 
                 if args.dry_run:
                     print("Dry-run: not sending MOVE command.")
-                    break
+                else:
+                    send_move(args.port, 9600, pose)
 
-                send_move(args.port, 9600, pose)
-                break
+                print(
+                    f"Waiting {DETECTION_WAIT_SECONDS:.0f} seconds before detecting again.",
+                    flush=True,
+                )
+                time.sleep(DETECTION_WAIT_SECONDS)
+
+            elif args.debug:
+                print(f"[debug] frame {frame_number}: no detections", flush=True)
 
             cv2.imshow("stem target", bgr)
             key = cv2.waitKey(10) & 0xFF

@@ -130,3 +130,7 @@ transform camera XYZ to robot XYZ using calibration
 run IK on the target robot position
 send servo angles to Arduino
 keep the claw open until target is stable, then close it
+
+========================
+Add debug messages for x, y, and z
+Round up the motor angles sent to Arduino
