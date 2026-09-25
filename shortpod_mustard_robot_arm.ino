@@ -296,8 +296,12 @@ void processCommand(char *cmd) {
     showHelp();
     return;
   }
+      Serial.print(F("COMMAND:"));
+            Serial.println(cmd);
+
 
   if (strncmp(cmd, "MOVE", 4) == 0) {
+      Serial.println(F("I AM MOVING!"));
     char *rest = cmd + 4;
     int values[6] = {0, 0, 0, 0, 0, 0};
     int count = 0;
