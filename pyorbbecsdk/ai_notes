@@ -124,3 +124,9 @@ Please write the exact kinematics math for my arm
 
 =========================
 For details on the math for kinematics according to AI, refer to images directory
+detect plant stem in image
+convert image point to depth point in camera coordinates
+transform camera XYZ to robot XYZ using calibration
+run IK on the target robot position
+send servo angles to Arduino
+keep the claw open until target is stable, then close it

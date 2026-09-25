@@ -21,6 +21,7 @@
   HOME
   WAKEUP
   TEST
+  MOVE <base> <arm1> <elbow> <tilt> <twist> <claw>
 
 
   C+ / C-     = Claw
@@ -165,6 +166,7 @@ void showHelp() {
   Serial.println(F("  LIMITS     Print safe angle limits"));
   Serial.println(F("  HOME       Move to the HOME pose"));
   Serial.println(F("  WAKEUP     Move all motors around"));
+  Serial.println(F("  MOVE x y z a b c   Absolute joint move (base, arm1, elbow, tilt, twist, claw)"));
   Serial.println();
   Serial.println(F("Move one joint by degrees (relative):"));
   Serial.println(F("  C+ / C-    Claw"));
@@ -191,6 +193,17 @@ void goHome() {
   applyPose();
 
   Serial.println(F("Moved to HOME pose."));
+}
+
+// Move to an absolute pose: base, arm1, elbow, tiltWrist, twistWrist, claw
+void moveToAbsolutePose(int base, int arm1, int elbow, int tiltWrist, int twistWrist, int claw) {
+  baseAngle = checkAngleBoundary(base, baseMinAngle, baseMaxAngle);
+  arm1Angle = checkAngleBoundary(arm1, arm1MinAngle, arm1MaxAngle);
+  elbowAngle = checkAngleBoundary(elbow, elbowMinAngle, elbowMaxAngle);
+  tiltWristAngle = checkAngleBoundary(tiltWrist, tiltWristMinAngle, tiltWristMaxAngle);
+  twistWristAngle = checkAngleBoundary(twistWrist, twistWristMinAngle, twistWristMaxAngle);
+  clawAngle = checkAngleBoundary(claw, clawMinAngle, clawMaxAngle);
+  applyPose();
 }
 
 // Move one joint by a relative number of degrees
@@ -281,6 +294,34 @@ void doActionWakeup() {
 void processCommand(char *cmd) {
   if (strcmp(cmd, "HELP") == 0) {
     showHelp();
+    return;
+  }
+
+  if (strncmp(cmd, "MOVE", 4) == 0) {
+    char *rest = cmd + 4;
+    int values[6] = {0, 0, 0, 0, 0, 0};
+    int count = 0;
+
+    while (*rest == ' ') rest++;
+
+    char *token = strtok(rest, " ");
+    while (token != NULL && count < 6) {
+      values[count++] = atoi(token);
+      token = strtok(NULL, " ");
+    }
+
+    if (count != 6) {
+      Serial.println(F("MOVE requires 6 values: base arm1 elbow tilt twist claw"));
+      return;
+    }
+
+    moveToAbsolutePose(values[0], values[1], values[2], values[3], values[4], values[5]);
+    Serial.print(F("Moved to absolute pose: "));
+    for (int i = 0; i < 6; i++) {
+      Serial.print(values[i]);
+      if (i < 5) Serial.print(F(" "));
+    }
+    Serial.println();
     return;
   }
 
