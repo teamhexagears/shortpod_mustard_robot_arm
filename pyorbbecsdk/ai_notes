@@ -134,3 +134,4 @@ keep the claw open until target is stable, then close it
 ========================
 Add debug messages for x, y, and z
 Round up the motor angles sent to Arduino
+Add boundary for Z coordinate

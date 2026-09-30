@@ -56,7 +56,7 @@ const byte BASE_PIN = 11;
 
 const int small_movement = 2;
 const int mid_movement = 5;
-const int big_movement = 10;
+const int big_movement = 20;
 
 /*
 ---------- Calibration behavior ----------
@@ -75,7 +75,7 @@ int baseMinAngle = 0;
 
 // Maximum safe angles for each joint
 int clawMaxAngle = 179;
-int tiltWristMaxAngle = 90;
+int tiltWristMaxAngle = 170;
 int twistWristMaxAngle = 179;
 int elbowMaxAngle = 130;
 int arm1MaxAngle = 150;
@@ -83,11 +83,11 @@ int baseMaxAngle = 160;
 
 // HOME position angles for each joint (reset position)
 int clawHomeAngle = 150;
-int tiltWristHomeAngle = 50;
+int tiltWristHomeAngle = 90;
 int twistWristHomeAngle = 90;
 int elbowHomeAngle = 90;
 int arm1HomeAngle = 60;
-int baseHomeAngle = 80;
+int baseHomeAngle = 30;
 
 // Initilal joint angles (start at HOME position)
 int clawAngle = clawHomeAngle;
@@ -118,7 +118,7 @@ void applyPose() {
   arm1Angle = checkAngleBoundary(arm1Angle, arm1MinAngle, arm1MaxAngle);
   baseAngle = checkAngleBoundary(baseAngle, baseMinAngle, baseMaxAngle);
   clawServo.write(clawAngle);
-  tiltWristServo.write(tiltWristAngle);
+  tiltWristServo.writeMicroseconds(tiltWristAngle);
   twistWristServo.write(twistWristAngle);
   elbowServo.write(elbowAngle);
   arm1Servo.write(arm1Angle);
@@ -372,11 +372,11 @@ void processCommand(char *cmd) {
   // TI+ or TI- : Tilt Wrist
   if (strlen(cmd) == 3 && cmd[0] == 'T' && cmd[1] == 'I') {
     if (cmd[2] == '+') {
-      moveJoint("tiltWrist", mid_movement);
+      moveJoint("tiltWrist", big_movement);
       return;
     }
     if (cmd[2] == '-') {
-      moveJoint("tiltWrist", mid_movement * -1);
+      moveJoint("tiltWrist", big_movement * -1);
       return;
     }
   }
