@@ -70,7 +70,7 @@ CURRENT_POSE = {
 }
 
 MAX_TARGET_Z_MM = 600.0
-DETECTION_WAIT_SECONDS = 5.0
+DETECTION_WAIT_SECONDS = 1.0
 
 
 def fk(q):
@@ -149,7 +149,7 @@ def q_to_pose_deg(q):
     return pose
 
 
-def depth_to_camera_xyz(depth_frame, x_px, y_px):
+def depth_to_camera_xyz(depth_frame, x_px, y_px, radius=4):
     depth_map = np.frombuffer(depth_frame.get_data(), dtype=np.uint16)
     h = depth_frame.get_height()
     w = depth_frame.get_width()
@@ -160,10 +160,21 @@ def depth_to_camera_xyz(depth_frame, x_px, y_px):
     x = max(0, min(w - 1, x))
     y = max(0, min(h - 1, y))
 
-    # Orbbec's depth scale converts the raw value directly to millimeters.
-    z_mm = float(depth_map[y, x] * depth_frame.get_depth_scale())
+    x_start = max(0, x - radius)
+    x_end = min(w, x + radius + 1)
+    y_start = max(0, y - radius)
+    y_end = min(h, y + radius + 1)
+    raw_samples = depth_map[y_start:y_end, x_start:x_end]
+    scale = float(depth_frame.get_depth_scale())
+    samples_mm = raw_samples * scale
+    valid_samples = samples_mm[np.isfinite(samples_mm) & (samples_mm > 0)]
+    if valid_samples.size == 0:
+        return None, 0
+
+    # Median rejects isolated depth holes/outliers near the box-bottom pixel.
+    z_mm = float(np.median(valid_samples))
     if not np.isfinite(z_mm) or z_mm <= 0:
-        return None
+        return None, int(valid_samples.size)
 
     intr = depth_frame.get_stream_profile().get_intrinsic()
     fx = intr.fx
@@ -174,7 +185,7 @@ def depth_to_camera_xyz(depth_frame, x_px, y_px):
     X = (x - cx) * z_mm / fx
     Y = (y - cy) * z_mm / fy
     Z = z_mm
-    return np.array([X, Y, Z], dtype=np.float64)
+    return np.array([X, Y, Z], dtype=np.float64), int(valid_samples.size)
 
 
 def camera_to_robot(camera_xyz):
@@ -192,14 +203,12 @@ def build_move_command(pose):
     )
 
 
-def send_move(port, baud, pose):
+def send_move(ser, pose):
     cmd = build_move_command(pose)
     print("Arduino MOVE command:", cmd, flush=True)
-    ser = serial.Serial(port, baud, timeout=1)
-    time.sleep(2)
     ser.write((cmd + "\n").encode("ascii"))
+    ser.flush()
     time.sleep(0.3)
-    ser.close()
 
 
 def parse_args() -> argparse.Namespace:
@@ -232,8 +241,15 @@ def main():
     pipeline.start(config)
     align = AlignFilter(align_to_stream=OBStreamType.COLOR_STREAM)
     frame_number = 0
+    ser = None
 
     try:
+        if not args.dry_run:
+            print(f"Opening Arduino serial connection on {args.port}...", flush=True)
+            ser = serial.Serial(args.port, 9600, timeout=1)
+            # Opening a Uno serial port may reset the board; allow setup() to finish once.
+            time.sleep(2)
+
         while True:
             frame_number += 1
             frames = pipeline.wait_for_frames(1000)
@@ -276,6 +292,41 @@ def main():
             result = results[0]
 
             if result.boxes is not None and len(result.boxes) > 0:
+                confidences = result.boxes.conf.cpu().numpy()
+                best_index = int(np.argmax(confidences))
+                best = result.boxes[best_index]
+                x1_box, y1_box, x2_box, y2_box = map(int, best.xyxy[0].tolist())
+                confidence = float(best.conf[0])
+                color = (0, 255, 0)
+                cv2.rectangle(bgr, (x1_box, y1_box), (x2_box, y2_box), color, 2)
+                cv2.putText(
+                    bgr,
+                    f"mustard {confidence:.2f}",
+                    (x1_box, max(20, y1_box - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    color,
+                    2,
+                )
+
+                best_x1, best_y1, best_x2, best_y2 = map(float, best.xyxy[0].tolist())
+                stem_x = int(round((best_x1 + best_x2) / 2.0))
+                stem_y = int(round(best_y2 - (best_y2 - best_y1) / 10.0))
+                cv2.drawMarker(
+                    bgr,
+                    (stem_x, stem_y),
+                    (0, 0, 255),
+                    cv2.MARKER_CROSS,
+                    markerSize=14,
+                    thickness=2,
+                )
+
+            cv2.imshow("stem target", bgr)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (27, ord("q")):
+                break
+
+            if result.boxes is not None and len(result.boxes) > 0:
                 if args.debug:
                     confidences = result.boxes.conf.cpu().numpy()
                     #print(
@@ -291,16 +342,16 @@ def main():
                         #     flush=True,
                         # )
 
-                best = result.boxes[int(np.argmax(result.boxes.conf.cpu().numpy()))]
                 x1, y1, x2, y2 = map(float, best.xyxy[0].tolist())
 
                 x_center = (x1 + x2) / 2.0
-                y_bottom = y2
+                stem_y = y2 - (y2 - y1) / 10.0
 
-                camera_xyz = depth_to_camera_xyz(depth_frame, x_center, y_bottom)
+                camera_xyz, depth_sample_count = depth_to_camera_xyz(depth_frame, x_center, stem_y)
                 if camera_xyz is None:
                     print(
-                        f"Depth unavailable at stem target pixel ({x_center:.1f}, {y_bottom:.1f})",
+                        f"Depth unavailable around stem target pixel "
+                        f"({x_center:.1f}, {stem_y:.1f}); no valid samples in 9x9 window.",
                         flush=True,
                     )
                     continue
@@ -320,7 +371,8 @@ def main():
                 ik_error_mm = float(np.linalg.norm(fk(q) - robot_xyz))
 
                 print(f"detection_confidence: {float(best.conf[0]):.3f}")
-                print(f"stem_pixel: ({x_center:.1f}, {y_bottom:.1f}, {camera_xyz[2]:.1f})")
+                print(f"stem_pixel: ({x_center:.1f}, {stem_y:.1f}, {camera_xyz[2]:.1f})")
+                print(f"valid_depth_samples: {depth_sample_count}")
                 print("camera_xyz:", np.round(camera_xyz, 2))
                 print("robot_xyz:", np.round(robot_xyz, 2))
                 print(f"ik_error_mm: {ik_error_mm:.2f}")
@@ -330,7 +382,8 @@ def main():
                 if args.dry_run:
                     print("Dry-run: not sending MOVE command.")
                 else:
-                    send_move(args.port, 9600, pose)
+                    assert ser is not None
+                    send_move(ser, pose)
 
                 print(
                     f"Waiting {DETECTION_WAIT_SECONDS:.0f} seconds before detecting again.",
@@ -341,14 +394,13 @@ def main():
             elif args.debug:
                 print(f"[debug] frame {frame_number}: no detections", flush=True)
 
-            cv2.imshow("stem target", bgr)
-            key = cv2.waitKey(10) & 0xFF
-            if key in (27, ord("q")):
-                break
-
     finally:
         cv2.destroyAllWindows()
-        pipeline.stop()
+        try:
+            pipeline.stop()
+        finally:
+            if ser is not None and ser.is_open:
+                ser.close()
 
 
 if __name__ == "__main__":

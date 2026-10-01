@@ -67,7 +67,7 @@ const int big_movement = 20;
 
 // Minimum safe angles for each joint
 int clawMinAngle = 100;
-int tiltWristMinAngle = 0;
+int tiltWristMinAngle = 10;
 int twistWristMinAngle = 0;
 int elbowMinAngle = 10;
 int arm1MinAngle = 30;
@@ -75,18 +75,18 @@ int baseMinAngle = 0;
 
 // Maximum safe angles for each joint
 int clawMaxAngle = 179;
-int tiltWristMaxAngle = 170;
+int tiltWristMaxAngle = 70;
 int twistWristMaxAngle = 179;
-int elbowMaxAngle = 130;
+int elbowMaxAngle = 150;
 int arm1MaxAngle = 150;
 int baseMaxAngle = 160;
 
 // HOME position angles for each joint (reset position)
 int clawHomeAngle = 150;
-int tiltWristHomeAngle = 90;
+int tiltWristHomeAngle = 50;
 int twistWristHomeAngle = 90;
-int elbowHomeAngle = 90;
-int arm1HomeAngle = 60;
+int elbowHomeAngle = 150;
+int arm1HomeAngle = 30;
 int baseHomeAngle = 30;
 
 // Initilal joint angles (start at HOME position)
@@ -118,7 +118,7 @@ void applyPose() {
   arm1Angle = checkAngleBoundary(arm1Angle, arm1MinAngle, arm1MaxAngle);
   baseAngle = checkAngleBoundary(baseAngle, baseMinAngle, baseMaxAngle);
   clawServo.write(clawAngle);
-  tiltWristServo.writeMicroseconds(tiltWristAngle);
+  tiltWristServo.write(tiltWristAngle);
   twistWristServo.write(twistWristAngle);
   elbowServo.write(elbowAngle);
   arm1Servo.write(arm1Angle);

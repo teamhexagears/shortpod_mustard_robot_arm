@@ -134,4 +134,63 @@ keep the claw open until target is stable, then close it
 ========================
 Add debug messages for x, y, and z
 Round up the motor angles sent to Arduino
-Add boundary for Z coordinate
+Add boundary for Z coordinate so we don't end up getting Z position of 10000
+
+When object is too close, the camera does not send correct data, look into multiple x,y position closeby to try to get Z position.
+If multiple Z position is found, use median
+
+The current python code does not draw a bounding box, can we enable that?
+
+Good, next we need to work on getting depth accurate. 
+Currently it is not accurate at all. (Arm should move down a lot more)
+
+It is inaccurate, here are the readings, I measured 4 sets of positions, with x and y staying the same.
+first depth is the actual depth, where second depth is the reading from camera (camera_xyz)
+200mm -> 214mm
+230mm -> 420mm
+250mm -> 434mm
+280mm -> 428mm
+
+ok I got a white board for the background, it's looking much better
+230mm -> 235mm
+250mm -> 256mm
+280mm -> 288mm
+
+ok but camera_xyz looks good, but robot_xyz does not. Again arm is not moving far enough. Here are some calibration references:
+
+===== CURRENT COMMANDED POSE =====
+Claw    = 150
+Tilt Wrist = 90
+Twist Wrist = 90
+Elbow   = 70
+Arm 1   = 150
+Arm 2   = 30
+Base    = 30
+
+calibration 1:
+camera_xyz: [    -214.89       11.73         386]
+robot_xyz: [     -341.3       22.34      253.84]
+pose_deg: {'base': 0, 'arm1': 136, 'elbow': 11, 'tiltWrist':69, 'twistWrist': 90, 'claw': 150}
+actual_xyz: [-100 80 140] 
+actual pos_deg: 25 140 70 90 90 150
+
+calibration 2:
+camera_xyz: [      29.95       80.82         373]
+robot_xyz: [    -138.85     -132.16      259.57]
+proposed pose_deg: {'base': 44, 'arm1': 91, 'elbow': 75, 'tiltWrist':68, 'twistWrist': 90, 'claw': 150}
+actual_xyz: [-130 80 190]
+actual pos_deg: 35 145 80 90 90 150
+
+calibration 3:
+camera_xyz: [     134.76       94.56         186]
+robot_xyz: [     -42.87     -201.02       80.16]
+proposed pose_deg: {'base': 78, 'arm1': 116, 'elbow': 111, 'tiltWrist': 39, 'twistWrist': 90, 'claw': 150}
+actual_xyz: 120 80 160
+actual pos_deg:  70 150 60 90 90 150
+
+calibration 4:
+camera_xyz: [     -32.66      157.92         308]
+robot_xyz: [    -107.19      -33.55      201.59]
+pose_deg: {'base': 160, 'arm1': 30, 'elbow': 108, 'tiltWrist': 90, 'twistWrist': 90, 'claw': 150}
+actual_xyz: [-30 80 150]
+actual pos_deg: 30 140 80 90 90 150
