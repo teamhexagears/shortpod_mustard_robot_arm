@@ -57,6 +57,7 @@ const byte BASE_PIN = 11;
 const int small_movement = 2;
 const int mid_movement = 5;
 const int big_movement = 20;
+const int MOVE_STEP_DELAY_MS = 15;
 
 /*
 ---------- Calibration behavior ----------
@@ -109,8 +110,10 @@ int checkAngleBoundary(int value, int lowLimit, int highLimit) {
   return value;
 }
 
-// Apply the current joint angles to the servos and print the current pose
-void applyPose() {
+void moveToAbsolutePose(int base, int arm1, int elbow, int tiltWrist, int twistWrist, int claw);
+
+// Write current ramp-step angles to the servo outputs.
+void writePose(bool printStatus = true) {
   clawAngle = checkAngleBoundary(clawAngle, clawMinAngle, clawMaxAngle);
   tiltWristAngle = checkAngleBoundary(tiltWristAngle, tiltWristMinAngle, tiltWristMaxAngle);
   twistWristAngle = checkAngleBoundary(twistWristAngle, twistWristMinAngle, twistWristMaxAngle);
@@ -124,7 +127,20 @@ void applyPose() {
   arm1Servo.write(arm1Angle);
   arm2Servo.write(180 - arm1Angle);  // Arm 2 mirrors Arm 1
   baseServo.write(baseAngle);
-  showPosition();
+  if (printStatus) {
+    showPosition();
+  }
+}
+
+// Route requested poses through the gradual movement routine.
+void applyPose(int base, int arm1, int elbow, int tiltWrist, int twistWrist, int claw) {
+  moveToAbsolutePose(base, arm1, elbow, tiltWrist, twistWrist, claw);
+}
+
+int stepToward(int current, int target) {
+  if (current < target) return current + 1;
+  if (current > target) return current - 1;
+  return current;
 }
 
 // Display the current commanded angle for each joint
@@ -183,71 +199,94 @@ void showHelp() {
 
 // Move all joints to their saved HOME angles
 void goHome() {
-  clawAngle = clawHomeAngle;
-  tiltWristAngle = tiltWristHomeAngle;
-  twistWristAngle = twistWristHomeAngle;
-  elbowAngle = elbowHomeAngle;
-  arm1Angle = arm1HomeAngle;
-  baseAngle = baseHomeAngle;
-
-  applyPose();
+  applyPose(baseHomeAngle, arm1HomeAngle, elbowHomeAngle, tiltWristHomeAngle, twistWristHomeAngle, clawHomeAngle);
 
   Serial.println(F("Moved to HOME pose."));
 }
 
 // Move to an absolute pose: base, arm1, elbow, tiltWrist, twistWrist, claw
 void moveToAbsolutePose(int base, int arm1, int elbow, int tiltWrist, int twistWrist, int claw) {
-  baseAngle = checkAngleBoundary(base, baseMinAngle, baseMaxAngle);
-  arm1Angle = checkAngleBoundary(arm1, arm1MinAngle, arm1MaxAngle);
-  elbowAngle = checkAngleBoundary(elbow, elbowMinAngle, elbowMaxAngle);
-  tiltWristAngle = checkAngleBoundary(tiltWrist, tiltWristMinAngle, tiltWristMaxAngle);
-  twistWristAngle = checkAngleBoundary(twistWrist, twistWristMinAngle, twistWristMaxAngle);
-  clawAngle = checkAngleBoundary(claw, clawMinAngle, clawMaxAngle);
-  applyPose();
+  const int targetBase = checkAngleBoundary(base, baseMinAngle, baseMaxAngle);
+  const int targetArm1 = checkAngleBoundary(arm1, arm1MinAngle, arm1MaxAngle);
+  const int targetElbow = checkAngleBoundary(elbow, elbowMinAngle, elbowMaxAngle);
+  const int targetTiltWrist = checkAngleBoundary(tiltWrist, tiltWristMinAngle, tiltWristMaxAngle);
+  const int targetTwistWrist = checkAngleBoundary(twistWrist, twistWristMinAngle, twistWristMaxAngle);
+  const int targetClaw = checkAngleBoundary(claw, clawMinAngle, clawMaxAngle);
+
+  while (baseAngle != targetBase || arm1Angle != targetArm1 || elbowAngle != targetElbow ||
+         tiltWristAngle != targetTiltWrist || twistWristAngle != targetTwistWrist ||
+         clawAngle != targetClaw) {
+    baseAngle = stepToward(baseAngle, targetBase);
+    arm1Angle = stepToward(arm1Angle, targetArm1);
+    elbowAngle = stepToward(elbowAngle, targetElbow);
+    tiltWristAngle = stepToward(tiltWristAngle, targetTiltWrist);
+    twistWristAngle = stepToward(twistWristAngle, targetTwistWrist);
+    clawAngle = stepToward(clawAngle, targetClaw);
+    writePose(false);
+
+    delay(MOVE_STEP_DELAY_MS);
+  }
+
+  writePose(false);
+  showPosition();
 }
 
 // Move one joint by a relative number of degrees
 void moveJoint(const char *jointName, int direction) {
+  int targetBase = baseAngle;
+  int targetArm1 = arm1Angle;
+  int targetElbow = elbowAngle;
+  int targetTiltWrist = tiltWristAngle;
+  int targetTwistWrist = twistWristAngle;
+  int targetClaw = clawAngle;
+
   if (strcmp(jointName, "claw") == 0) {
-    clawAngle += direction;
+    targetClaw += direction;
   } else if (strcmp(jointName, "tiltWrist") == 0) {
-    tiltWristAngle += direction;
+    targetTiltWrist += direction;
   } else if (strcmp(jointName, "twistWrist") == 0) {
-    twistWristAngle += direction;
+    targetTwistWrist += direction;
   } else if (strcmp(jointName, "elbow") == 0) {
-    elbowAngle += direction;
+    targetElbow += direction;
   } else if (strcmp(jointName, "arm1") == 0) {
-    arm1Angle += direction;
+    targetArm1 += direction;
   } else if (strcmp(jointName, "base") == 0) {
-    baseAngle += direction;
+    targetBase += direction;
   } else {
     Serial.println(F("Unknown joint name."));
     return;
   }
 
-  applyPose();
+  applyPose(targetBase, targetArm1, targetElbow, targetTiltWrist, targetTwistWrist, targetClaw);
 }
 
 // Turn one joint to a specific angle, and wait
 // Specify 0 for delay_ms to skip the wait
 void turnMotor(const char *jointName, int angle, int delay_ms) {
+  int targetBase = baseAngle;
+  int targetArm1 = arm1Angle;
+  int targetElbow = elbowAngle;
+  int targetTiltWrist = tiltWristAngle;
+  int targetTwistWrist = twistWristAngle;
+  int targetClaw = clawAngle;
+
   if (strcmp(jointName, "claw") == 0) {
-    clawAngle = angle;
+    targetClaw = angle;
   } else if (strcmp(jointName, "tiltWrist") == 0) {
-    tiltWristAngle = angle;
+    targetTiltWrist = angle;
   } else if (strcmp(jointName, "twistWrist") == 0) {
-    twistWristAngle = angle;
+    targetTwistWrist = angle;
   } else if (strcmp(jointName, "elbow") == 0) {
-    elbowAngle = angle;
+    targetElbow = angle;
   } else if (strcmp(jointName, "arm1") == 0) {
-    arm1Angle = angle;
+    targetArm1 = angle;
   } else if (strcmp(jointName, "base") == 0) {
-    baseAngle = angle;
+    targetBase = angle;
   } else {
     Serial.println(F("Unknown joint name."));
     return;
   }
-  applyPose();
+  applyPose(targetBase, targetArm1, targetElbow, targetTiltWrist, targetTwistWrist, targetClaw);
   delay(delay_ms);
 }
 
@@ -301,7 +340,6 @@ void processCommand(char *cmd) {
 
 
   if (strncmp(cmd, "MOVE", 4) == 0) {
-      Serial.println(F("I AM MOVING!"));
     char *rest = cmd + 4;
     int values[6] = {0, 0, 0, 0, 0, 0};
     int count = 0;
@@ -318,6 +356,7 @@ void processCommand(char *cmd) {
       Serial.println(F("MOVE requires 6 values: base arm1 elbow tilt twist claw"));
       return;
     }
+    Serial.println(F("Running moveToAbsolutePose"));
 
     moveToAbsolutePose(values[0], values[1], values[2], values[3], values[4], values[5]);
     Serial.print(F("Moved to absolute pose: "));
@@ -458,7 +497,7 @@ void setup() {
     2. Replace goHome() values with the same HOME values.
     3. Remove the two slashes below to enXX`lable applyPose().
   */
-  applyPose();
+  applyPose(baseAngle, arm1Angle, elbowAngle, tiltWristAngle, twistWristAngle, clawAngle);
 
   Serial.println(F("Smart Weeding Arm Calibration Ready"));
   showHelp();
