@@ -21,7 +21,7 @@
   HOME
   WAKEUP
   TEST
-  MOVE <base> <arm1> <elbow> <tilt> <twist> <claw>
+  MOVE <base> <arm1> <elbow> <twist> <tilt> <claw>
 
 
   C+ / C-     = Claw
@@ -110,8 +110,6 @@ int checkAngleBoundary(int value, int lowLimit, int highLimit) {
   return value;
 }
 
-void moveToAbsolutePose(int base, int arm1, int elbow, int tiltWrist, int twistWrist, int claw);
-
 // Write current ramp-step angles to the servo outputs.
 void writePose(bool printStatus = true) {
   clawAngle = checkAngleBoundary(clawAngle, clawMinAngle, clawMaxAngle);
@@ -133,8 +131,8 @@ void writePose(bool printStatus = true) {
 }
 
 // Route requested poses through the gradual movement routine.
-void applyPose(int base, int arm1, int elbow, int tiltWrist, int twistWrist, int claw) {
-  moveToAbsolutePose(base, arm1, elbow, tiltWrist, twistWrist, claw);
+void applyPose(int base, int arm1, int elbow, int twistWrist, int tiltWrist, int claw) {
+  moveToAbsolutePose(base, arm1, elbow, twistWrist, tiltWrist, claw);
 }
 
 int stepToward(int current, int target) {
@@ -168,6 +166,10 @@ void showPosition() {
 
   Serial.print(F("Base    = "));
   Serial.println(baseAngle);
+
+  Serial.print(F("MOVE "));
+  Serial.println(String(baseAngle) + " " + String(arm1Angle) + " " + String(elbowAngle) + " " +
+                 String(twistWristAngle) + " " + String(tiltWristAngle) + " " + String(clawAngle));
 }
 
 // Display the available serial commands
@@ -182,7 +184,7 @@ void showHelp() {
   Serial.println(F("  LIMITS     Print safe angle limits"));
   Serial.println(F("  HOME       Move to the HOME pose"));
   Serial.println(F("  WAKEUP     Move all motors around"));
-  Serial.println(F("  MOVE x y z a b c   Absolute joint move (base, arm1, elbow, tilt, twist, claw)"));
+  Serial.println(F("  MOVE x y z a b c   Absolute joint move (base, arm1, elbow, twist, tilt, claw)"));
   Serial.println();
   Serial.println(F("Move one joint by degrees (relative):"));
   Serial.println(F("  C+ / C-    Claw"));
@@ -199,13 +201,13 @@ void showHelp() {
 
 // Move all joints to their saved HOME angles
 void goHome() {
-  applyPose(baseHomeAngle, arm1HomeAngle, elbowHomeAngle, tiltWristHomeAngle, twistWristHomeAngle, clawHomeAngle);
+  applyPose(baseHomeAngle, arm1HomeAngle, elbowHomeAngle, twistWristHomeAngle, tiltWristHomeAngle, clawHomeAngle);
 
   Serial.println(F("Moved to HOME pose."));
 }
 
-// Move to an absolute pose: base, arm1, elbow, tiltWrist, twistWrist, claw
-void moveToAbsolutePose(int base, int arm1, int elbow, int tiltWrist, int twistWrist, int claw) {
+// Move to an absolute pose: base, arm1, elbow, twistWrist, tiltWrist, claw
+void moveToAbsolutePose(int base, int arm1, int elbow, int twistWrist, int tiltWrist, int claw) {
   const int targetBase = checkAngleBoundary(base, baseMinAngle, baseMaxAngle);
   const int targetArm1 = checkAngleBoundary(arm1, arm1MinAngle, arm1MaxAngle);
   const int targetElbow = checkAngleBoundary(elbow, elbowMinAngle, elbowMaxAngle);
@@ -257,7 +259,7 @@ void moveJoint(const char *jointName, int direction) {
     return;
   }
 
-  applyPose(targetBase, targetArm1, targetElbow, targetTiltWrist, targetTwistWrist, targetClaw);
+  applyPose(targetBase, targetArm1, targetElbow, targetTwistWrist, targetTiltWrist, targetClaw);
 }
 
 // Turn one joint to a specific angle, and wait
@@ -286,7 +288,7 @@ void turnMotor(const char *jointName, int angle, int delay_ms) {
     Serial.println(F("Unknown joint name."));
     return;
   }
-  applyPose(targetBase, targetArm1, targetElbow, targetTiltWrist, targetTwistWrist, targetClaw);
+  applyPose(targetBase, targetArm1, targetElbow, targetTwistWrist, targetTiltWrist, targetClaw);
   delay(delay_ms);
 }
 
@@ -497,7 +499,7 @@ void setup() {
     2. Replace goHome() values with the same HOME values.
     3. Remove the two slashes below to enXX`lable applyPose().
   */
-  applyPose(baseAngle, arm1Angle, elbowAngle, tiltWristAngle, twistWristAngle, clawAngle);
+  applyPose(baseAngle, arm1Angle, elbowAngle, twistWristAngle, tiltWristAngle, clawAngle);
 
   Serial.println(F("Smart Weeding Arm Calibration Ready"));
   showHelp();

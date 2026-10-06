@@ -167,30 +167,64 @@ Arm 1   = 150
 Arm 2   = 30
 Base    = 30
 
+
+
+All calibration are measured from between rotation axes.
+
 calibration 1:
-camera_xyz: [    -214.89       11.73         386]
-robot_xyz: [     -341.3       22.34      253.84]
-pose_deg: {'base': 0, 'arm1': 136, 'elbow': 11, 'tiltWrist':69, 'twistWrist': 90, 'claw': 150}
-actual_xyz: [-100 80 140] 
-actual pos_deg: 25 140 70 90 90 150
+Pointing exactly at the red-x
+camera_xyz: [     -89.08       36.36         176]
+proposed_motor_angles_by_stem_to_robot_move.py: 
+  {'base': 14, 'arm1': 135, 'elbow': 88, 'tiltWrist': 79, 'twistWrist': 90, 'claw': 150}
+The robot coordinate frame: /home/admin/git/shortpod_mustard_robot_arm
+  origin is from base of the robot [0mm, 0mm, 0mm]
+  location of red-cross target from origin: X:180mm, Y:-180mm(facing same direction as robot, 180mm to the left), +Z:100mm
+commanded_servo_values sent to Arduino: 10 80 140 90 10 150
+Base motor Z+ goes straight up, controller left and right rotation of the arm.
+Shoulder(arm) motor Z+ is perpendicular to Z+ of Base motor, controlling the arm to swing up and down, this joint angle is 150 degrees
+Elbow motor Z+ is parallel to arm motor Z+, controlling the elbow to swing up and down, this joint angle is 90 degrees
+tiltWrist motor Z+ is paralllel to Z+ of elbow motor, controller the rest of the arm(hand) up and down, this joint angle is 180 degrees (not bent)
+
 
 calibration 2:
-camera_xyz: [      29.95       80.82         373]
-robot_xyz: [    -138.85     -132.16      259.57]
-proposed pose_deg: {'base': 44, 'arm1': 91, 'elbow': 75, 'tiltWrist':68, 'twistWrist': 90, 'claw': 150}
-actual_xyz: [-130 80 190]
-actual pos_deg: 35 145 80 90 90 150
+camera_xyz: [       46.4       38.12         194]
+robot_xyz: [    -141.33      -164.2       77.63]
+proposed_motor_angles: {'base': 49, 'arm1': 121, 'elbow': 101, 'tiltWrist': 55, 'twistWrist': 90, 'claw': 150}
+actual_xyz: [40 50 190]
+actual_motor_angles: 25 75 150 90 10 150
 
 calibration 3:
-camera_xyz: [     134.76       94.56         186]
-robot_xyz: [     -42.87     -201.02       80.16]
-proposed pose_deg: {'base': 78, 'arm1': 116, 'elbow': 111, 'tiltWrist': 39, 'twistWrist': 90, 'claw': 150}
-actual_xyz: 120 80 160
-actual pos_deg:  70 150 60 90 90 150
+camera_xyz: [     156.21       21.68         250]
+robot_xyz: [     -95.62     -264.09      135.91]
+proposed_motor_angles: {'base': 70, 'arm1': 118, 'elbow': 85, 'tiltWrist': 33, 'twistWrist': 90, 'claw': 150}
+actual_xyz: [150, 70, 250]
+actual_motor_angles: 40 93 90 90 50 150
 
 calibration 4:
-camera_xyz: [     -32.66      157.92         308]
-robot_xyz: [    -107.19      -33.55      201.59]
-pose_deg: {'base': 160, 'arm1': 30, 'elbow': 108, 'tiltWrist': 90, 'twistWrist': 90, 'claw': 150}
-actual_xyz: [-30 80 150]
-actual pos_deg: 30 140 80 90 90 150
+camera_xyz: [    -143.95       -8.09         312]
+robot_xyz: [    -305.78       -43.6       181.1]
+proposed_motor_angles: {'base': 8, 'arm1': 132, 'elbow': 39, 'tiltWrist': 88, 'twistWrist': 90, 'claw': 150}
+actual_xyz: [-165 95 310]
+actual_motor_angles: 0 110 60 90 40 150
+
+calibration 5:
+camera_xyz: [       8.48        11.6         334]
+robot_xyz: [    -201.88     -154.83      211.75]
+proposed_motor_angles: {'base': 37, 'arm1': 112, 'elbow': 63, 'tiltWrist': 75, 'twistWrist': 90, 'claw': 150}
+actual_xyz: [-5 80 325]
+actual_motor_angles: 30 110 60 90 40 150
+
+
+calibration 6:
+camera_xyz: [     169.22       65.94         317]
+robot_xyz: [     -60.82     -250.59      208.18]
+proposed_motor_angles: {'base': 76, 'arm1': 103, 'elbow': 90, 'tiltWrist': 13, 'twistWrist': 90, 'claw': 150}
+actual_xyz: [165 30 305]
+actual_motor_angles: 50 135 30 90 30 150
+
+
+
+Joint-axis-to-joint-axis distances between the base, shoulder, elbow, wrist joints, and gripper tip. Your existing 220/150/70 mm lengths are a starting point; confirm they measure between rotation axes.
+Each joint’s angle, with its zero position and positive direction. Servo commands are enough if we know their offsets and directions.
+The robot coordinate frame: origin and +X/+Y/+Z directions.
+The exact point on the gripper whose XYZ you want, such as the midpoint between the closed claw tips.

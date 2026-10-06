@@ -197,8 +197,8 @@ def build_move_command(pose):
         int(round(pose["base"])),
         int(round(pose["arm1"])),
         int(round(pose["elbow"])),
-        int(round(pose["tiltWrist"])),
         int(round(pose["twistWrist"])),
+        int(round(pose["tiltWrist"])),
         int(round(pose["claw"])),
     )
 
