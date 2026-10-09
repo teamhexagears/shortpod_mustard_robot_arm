@@ -295,11 +295,8 @@ void turnMotor(const char *jointName, int angle, int delay_ms) {
 // Move all joints to their saved "FLOWER" angles
 void doActionFlower() {
     int sleep_time = 1000;
-    turnMotor("base", 80, sleep_time);
-    turnMotor("arm1", 140, sleep_time);
-    turnMotor("elbow", 70, sleep_time);
-    turnMotor("tiltWrist", 10, sleep_time);
-    turnMotor("twistWrist", 90, sleep_time);
+
+
     turnMotor("claw", 110, sleep_time);
     turnMotor("twistWrist", 155, sleep_time);
     turnMotor("arm1", 60, sleep_time);

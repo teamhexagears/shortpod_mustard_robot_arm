@@ -168,10 +168,14 @@ def wait_for(ser, token, timeout_s=15.0):
     return False
 
 
+ENFORCE_LIMITS = True   # set False with --no-limits
+
+
 def clamp_pose(pose):
     out = dict(pose)
     for name in JOINTS + ["claw"]:
-        lo, hi = arm.JOINT_LIMITS[name]
+        # With --no-limits only the servo's physical range (0-180) is enforced.
+        lo, hi = arm.JOINT_LIMITS[name] if ENFORCE_LIMITS else (0, 180)
         out[name] = int(round(min(max(out[name], lo), hi)))
     return out
 
@@ -368,7 +372,7 @@ def jog_to_marker(ser, pose):
             continue
         clamped = clamp_pose(new)
         if clamped != {k: int(round(v)) for k, v in new.items()}:
-            print("  (clamped to the Arduino safety limits)")
+            print("  (clamped to the safety limits)" if ENFORCE_LIMITS else "  (clamped to servo range 0-180)")
         ok, why = pose_is_safe(clamped)
         if not ok:
             print(f"  REFUSED: {why}")
@@ -483,6 +487,10 @@ def parse_args():
     ap.add_argument("--port", default="/dev/ttyACM0")
     ap.add_argument("--dry-run", action="store_true", help="no Arduino; print MOVE commands only")
     ap.add_argument("--claw", type=int, default=150, help="claw servo value while calibrating")
+    ap.add_argument("--no-limits", action="store_true",
+                    help="ignore the Python joint limits (servo 0-180 only). The Arduino sketch still "
+                         "clamps to its own limits unless you widen them there too. "
+                         "The below-table check stays on.")
     ap.add_argument("--resume", action="store_true", help="continue adding to saved points")
     ap.add_argument("--recompute", action="store_true", help="refit from saved points (no camera/arm)")
     ap.add_argument("--exclude", default="", help="comma-separated point ids to leave out, e.g. 3,7")
@@ -491,6 +499,12 @@ def parse_args():
 
 def main():
     args = parse_args()
+    global ENFORCE_LIMITS
+    if args.no_limits:
+        ENFORCE_LIMITS = False
+        print("WARNING: --no-limits: Python joint limits are OFF (servo 0-180 only).")
+        print("         The Arduino still clamps to its own min/max angles unless you change them.")
+        print("         The below-table check is still ON. Keep a hand on the power switch.")
     exclude = {int(v) for v in args.exclude.split(",") if v.strip()}
     if args.recompute:
         if not POINTS_PATH.exists():

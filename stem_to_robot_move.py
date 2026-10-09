@@ -381,7 +381,7 @@ def run_fk_verification(args):
                 ser.write((cmd + "\n").encode("ascii"))
                 ser.flush()
                 if not wait_for_arduino_move(ser):
-                    print("  WARNING: no 'Moved to absolute pose' reply; check the arm before measuring.")
+                    print("  WARNING: B+ no 'Moved to absolute pose' reply; check the arm before measuring.")
                 time.sleep(0.5)  # let the arm settle
             else:
                 print("  (dry-run) send this MOVE yourself in Serial Monitor.")

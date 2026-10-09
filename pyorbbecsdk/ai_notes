@@ -136,95 +136,20 @@ Add debug messages for x, y, and z
 Round up the motor angles sent to Arduino
 Add boundary for Z coordinate so we don't end up getting Z position of 10000
 
-When object is too close, the camera does not send correct data, look into multiple x,y position closeby to try to get Z position.
-If multiple Z position is found, use median
+Please write a script that helps me calibration
+Open up the orbbec camera screen and have me point at a location to identify the calibration point
+then I would move the robot arm over using Arduino command A+, E+, etc.
+Then the script will record the angles of every motor and use all thes data for calibration
 
-The current python code does not draw a bounding box, can we enable that?
+pose: base 30 arm1 78 elbow 130 tilt 45 claw 150   ->  claw middle x=320 y=-66 z=67 mm
+pose: base 0 arm1 84 elbow 130 tilt 24 claw 150   ->  claw middle x=330 y=81 z=46 mm
+pose: base 20 arm1 95 elbow 81 tilt 40 claw 150   ->  claw middle x=423 y=-29 z=97 mm
+pose: base 45 arm1 100 elbow 103 tilt 25 claw 150   ->  claw middle x=354 y=-149 z=9 mm
+pose: base 55 arm1 70 elbow 130 tilt 20 claw 150   ->  claw middle x=306 y=-175 z=135 mm
+pose: base 33 arm1 89 elbow 86 tilt 31 claw 150   ->  claw middle x=410 y=-101 z=133 mm
+pose: base 25 arm1 86 elbow 107 tilt 20 claw 150   ->  claw middle x=394 y=-53 z=100 mm
 
-Good, next we need to work on getting depth accurate. 
-Currently it is not accurate at all. (Arm should move down a lot more)
+next time we'll tell ai to first pause the scanning then grab the mustard, then put it in 
+the wastebasket then wait 10 secs and continue scanning.
 
-It is inaccurate, here are the readings, I measured 4 sets of positions, with x and y staying the same.
-first depth is the actual depth, where second depth is the reading from camera (camera_xyz)
-200mm -> 214mm
-230mm -> 420mm
-250mm -> 434mm
-280mm -> 428mm
-
-ok I got a white board for the background, it's looking much better
-230mm -> 235mm
-250mm -> 256mm
-280mm -> 288mm
-
-ok but camera_xyz looks good, but robot_xyz does not. Again arm is not moving far enough. Here are some calibration references:
-
-===== CURRENT COMMANDED POSE =====
-Claw    = 150
-Tilt Wrist = 90
-Twist Wrist = 90
-Elbow   = 70
-Arm 1   = 150
-Arm 2   = 30
-Base    = 30
-
-
-
-All calibration are measured from between rotation axes.
-
-calibration 1:
-Pointing exactly at the red-x
-camera_xyz: [     -89.08       36.36         176]
-proposed_motor_angles_by_stem_to_robot_move.py: 
-  {'base': 14, 'arm1': 135, 'elbow': 88, 'tiltWrist': 79, 'twistWrist': 90, 'claw': 150}
-The robot coordinate frame: /home/admin/git/shortpod_mustard_robot_arm
-  origin is from base of the robot [0mm, 0mm, 0mm]
-  location of red-cross target from origin: X:180mm, Y:-180mm(facing same direction as robot, 180mm to the left), +Z:100mm
-commanded_servo_values sent to Arduino: 10 80 140 90 10 150
-Base motor Z+ goes straight up, controller left and right rotation of the arm.
-Shoulder(arm) motor Z+ is perpendicular to Z+ of Base motor, controlling the arm to swing up and down, this joint angle is 150 degrees
-Elbow motor Z+ is parallel to arm motor Z+, controlling the elbow to swing up and down, this joint angle is 90 degrees
-tiltWrist motor Z+ is paralllel to Z+ of elbow motor, controller the rest of the arm(hand) up and down, this joint angle is 180 degrees (not bent)
-
-
-calibration 2:
-camera_xyz: [       46.4       38.12         194]
-robot_xyz: [    -141.33      -164.2       77.63]
-proposed_motor_angles: {'base': 49, 'arm1': 121, 'elbow': 101, 'tiltWrist': 55, 'twistWrist': 90, 'claw': 150}
-actual_xyz: [40 50 190]
-actual_motor_angles: 25 75 150 90 10 150
-
-calibration 3:
-camera_xyz: [     156.21       21.68         250]
-robot_xyz: [     -95.62     -264.09      135.91]
-proposed_motor_angles: {'base': 70, 'arm1': 118, 'elbow': 85, 'tiltWrist': 33, 'twistWrist': 90, 'claw': 150}
-actual_xyz: [150, 70, 250]
-actual_motor_angles: 40 93 90 90 50 150
-
-calibration 4:
-camera_xyz: [    -143.95       -8.09         312]
-robot_xyz: [    -305.78       -43.6       181.1]
-proposed_motor_angles: {'base': 8, 'arm1': 132, 'elbow': 39, 'tiltWrist': 88, 'twistWrist': 90, 'claw': 150}
-actual_xyz: [-165 95 310]
-actual_motor_angles: 0 110 60 90 40 150
-
-calibration 5:
-camera_xyz: [       8.48        11.6         334]
-robot_xyz: [    -201.88     -154.83      211.75]
-proposed_motor_angles: {'base': 37, 'arm1': 112, 'elbow': 63, 'tiltWrist': 75, 'twistWrist': 90, 'claw': 150}
-actual_xyz: [-5 80 325]
-actual_motor_angles: 30 110 60 90 40 150
-
-
-calibration 6:
-camera_xyz: [     169.22       65.94         317]
-robot_xyz: [     -60.82     -250.59      208.18]
-proposed_motor_angles: {'base': 76, 'arm1': 103, 'elbow': 90, 'tiltWrist': 13, 'twistWrist': 90, 'claw': 150}
-actual_xyz: [165 30 305]
-actual_motor_angles: 50 135 30 90 30 150
-
-
-
-Joint-axis-to-joint-axis distances between the base, shoulder, elbow, wrist joints, and gripper tip. Your existing 220/150/70 mm lengths are a starting point; confirm they measure between rotation axes.
-Each joint’s angle, with its zero position and positive direction. Servo commands are enough if we know their offsets and directions.
-The robot coordinate frame: origin and +X/+Y/+Z directions.
-The exact point on the gripper whose XYZ you want, such as the midpoint between the closed claw tips.
+ask ai how to solve the lagging issue
