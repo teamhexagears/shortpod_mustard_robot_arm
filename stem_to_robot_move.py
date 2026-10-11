@@ -202,30 +202,13 @@ MAX_IK_ERROR_MM = 10.0  # skip targets the arm cannot reach accurately
 # =====================================================================
 # Claw servo values. TODO: check with C+ / C- in the Serial Monitor.
 CLAW_OPEN = 150         # jaws open wide enough to go around the stem
-CLAW_CLOSED = 100       # measured 2026-10-11: jaws closed on the stem
+CLAW_CLOSED = 110       # jaws closed on the stem (don't squeeze so hard the servo stalls)
 TWIST_ANGLE = 90        # twistWrist during the whole pick
 
-# Claw FACING the plant: the jaws point straight at the stem from the base side.
-# GRAB_PITCH_DEG = angle of the jaws vs the table: 0 = level (facing the stem),
-# -90 = pointing straight down. The program tries GRAB_PITCH_DEG first, then tilts
-# down in 5-degree steps until the arm can reach without touching the table.
-FACE_PLANT = True
-GRAB_PITCH_DEG = 0.0
-MIN_GRAB_PITCH_DEG = -90.0
-FORWARD_MM = 30.0       # go down this far SHORT of the stem (toward the base), then move forward onto it
 APPROACH_MM = 50.0      # first move this far ABOVE the stem, then go straight down
 LIFT_MM = 100.0         # after grabbing, pull the weed up this far before carrying it
 GRIP_SETTLE_S = 0.6     # time for the claw to close / open
 WAIT_AFTER_PICK_S = 10  # pause before scanning again (change with --wait-after)
-# Extra servo degrees added to the GRAB moves (steps 1-5) after IK.
-# Order matches MOVE: base, arm1, elbow, twistWrist, tiltWrist, claw.
-# Example: IK says MOVE 30 90 120 90 10 150 -> sent as MOVE 30 90 130 90 10 150.
-# Not applied to the carry / wastebasket / HOME poses.
-PICK_SERVO_OFFSET = {"base": 0, "arm1": 0, "elbow": 10,
-                     "twistWrist": 0, "tiltWrist": 0, "claw": 0}   # tilt now set by FACE_PLANT
-# Same min/max as the Arduino sketch; the offset pose is clamped to these.
-ARDUINO_LIMITS = {"base": (0, 160), "arm1": (30, 150), "elbow": (10, 150),
-                  "twistWrist": (0, 179), "tiltWrist": (10, 100), "claw": (100, 179)}  # tilt max raised to 100: change tiltWristMaxAngle in the .ino too
 CONFIRM_FRAMES = 3      # weed must be seen this many frames in a row (same spot) first
 CONFIRM_RADIUS_MM = 20.0
 MIN_Z_MM = 5.0          # refuse any pose that puts elbow/wrist/claw below the table
@@ -234,13 +217,7 @@ MIN_Z_MM = 5.0          # refuse any pose that puts elbow/wrist/claw below the t
 # TODO: find these with the Serial Monitor (jog with MOVE until the claw is over the
 # basket, high enough to clear the rim), then fill them in. Example: (130, 60, 110, 30)
 # While this is None the robot will detect and plan, but will NOT pick.
-# Safe HIGH pose for turning the base (arm1, elbow, tiltWrist). The base only turns while
-# the arm is in this pose, so the claw/weed passes OVER the side of the wastebasket.
-# (30, 130, 30) puts the claw about 345 mm above the table. If it still hits, lower
-# tiltWrist (claw points up more) or ask for a new pose.
-CARRY_POSE = (30, 130, 30)
-HOME_BASE = 30          # base angle of the Arduino HOME pose
-BIN_POSE = (160, 50, 150, 50)   # base, arm1, elbow, tiltWrist (measured 2026-10-11)
+BIN_POSE = None
 
 
 def fk(q):
@@ -682,124 +659,35 @@ def pose_below_table(pose):
     return None
 
 
-def ik_facing(target_xyz, pitch_deg):
-    """Exact IK with a fixed claw angle. Returns (servo pose, None) or (None, reason)."""
-    x, y, z = [float(v) for v in target_xyz]
-    r = math.hypot(x, y)
-    line = math.radians(pitch_deg + CLAW_LINE_AT_REF)   # direction of the wrist->claw-middle line
-    rw = r - L3 * math.cos(line)
-    zw = z - L3 * math.sin(line) - BASE_HEIGHT
-    d2 = rw * rw + zw * zw
-    c3 = (d2 - L1 * L1 - L2 * L2) / (2 * L1 * L2)
-    if abs(c3) > 1.0:
-        return None, "out of reach"
-    q3 = -math.acos(c3)                                   # elbow above the wrist
-    q2 = math.atan2(zw, rw) - math.atan2(L2 * math.sin(q3), L1 + L2 * math.cos(q3))
-    q4 = line - q2 - q3
-    q1 = math.atan2(y, x)
-    pose = {
-        "base": geom_to_servo("base", math.degrees(q1)),
-        "arm1": geom_to_servo("arm1", math.degrees(q2)),
-        "elbow": geom_to_servo("elbow", math.degrees(q3)),
-        "tiltWrist": geom_to_servo("tiltWrist", math.degrees(q4)),
-    }
-    for name, v in pose.items():
-        lo, hi = ARDUINO_LIMITS[name]
-        if not (lo - 0.5 <= v <= hi + 0.5):
-            return None, f"{name} would need servo {v:.0f} (limit {lo}-{hi})"
-    return {k: int(round(v)) for k, v in pose.items()}, None
-
-
-def ik_pose(target_xyz, claw, pitch_deg=None):
-    if pitch_deg is not None:
-        pose, why = ik_facing(target_xyz, pitch_deg)
-        if pose is None:
-            return None, why
-        pose["twistWrist"] = TWIST_ANGLE
-        pose["claw"] = claw
-        for name, extra in PICK_SERVO_OFFSET.items():
-            lo, hi = ARDUINO_LIMITS[name]
-            pose[name] = min(max(pose[name] + extra, lo), hi)
-        return pose, 0.0
-    return ik_pose_free(target_xyz, claw)
-
-
-def ik_pose_free(target_xyz, claw):
+def ik_pose(target_xyz, claw):
     """IK for a point; returns (pose, error_mm)."""
     q = ik_point(np.asarray(target_xyz, dtype=float))
     pose = q_to_pose_deg(q)
     pose["twistWrist"] = TWIST_ANGLE
     pose["claw"] = claw
-    for name, extra in PICK_SERVO_OFFSET.items():
-        lo, hi = ARDUINO_LIMITS[name]
-        pose[name] = min(max(pose[name] + extra, lo), hi)
     err = float(np.linalg.norm(fk(q) - target_xyz))
     return pose, err
 
 
 def plan_pick(target_xyz):
-    """Try the full forward slide first; if the start point is out of reach, use a shorter slide."""
-    first = None
-    for fwd in (FORWARD_MM, FORWARD_MM * 2 / 3, FORWARD_MM / 3, 0.0):
-        steps, problem = _plan_pick(target_xyz, fwd)
-        if first is None:
-            first = (steps, problem)
-        if problem is None or "BIN_POSE" in problem:
-            if fwd != FORWARD_MM:
-                print(f"  (forward slide shortened to {fwd:.0f} mm so the arm can reach)")
-            return steps, problem
-    return first
-
-
-def best_grab_pose(point, claw):
-    """Most level claw angle (facing the plant) that is reachable and stays above the table.
-    Returns (pose, pitch_deg or None, problem)."""
-    last = "out of reach"
-    if FACE_PLANT:
-        for pitch in np.arange(GRAB_PITCH_DEG, MIN_GRAB_PITCH_DEG - 0.1, -5.0):
-            pose, why = ik_pose(point, claw, float(pitch))
-            if pose is None:
-                last = why
-                continue
-            below = pose_below_table(pose)
-            if below:
-                last = below + " (below the table)"
-                continue
-            return pose, float(pitch), None
-    pose, err = ik_pose_free(point, claw)
-    if err > MAX_IK_ERROR_MM:
-        return None, None, f"IK error {err:.1f} mm (out of reach); facing grab: {last}"
-    below = pose_below_table(pose)
-    if below:
-        return None, None, below + " (below the table)"
-    return pose, None, None
-
-
-def _plan_pick(target_xyz, forward_mm):
     """Plan every step BEFORE moving. Returns (steps, problem). steps = [(label, pose)]."""
     target = np.asarray(target_xyz, dtype=float)
-    # unit vector pointing from the base outward to the stem (horizontal)
-    r = float(np.hypot(target[0], target[1]))
-    outward = np.array([target[0] / r, target[1] / r, 0.0]) if r > 1e-6 else np.array([1.0, 0.0, 0.0])
-    behind = target - forward_mm * outward
-    hover = behind + np.array([0.0, 0.0, APPROACH_MM])
+    hover = target + np.array([0.0, 0.0, APPROACH_MM])
     lift = target + np.array([0.0, 0.0, LIFT_MM])
     steps = []
     for label, point, claw in [
-        ("1 move above, just short of the weed (claw open)", hover, CLAW_OPEN),
-        ("2 go down beside the stem", behind, CLAW_OPEN),
-        ("3 move forward onto the stem", target, CLAW_OPEN),
-        ("4 close the claw", None, CLAW_CLOSED),
-        ("5 pull the weed up", lift, CLAW_CLOSED),
+        ("1 move above the weed (claw open)", hover, CLAW_OPEN),
+        ("2 go down to the stem", target, CLAW_OPEN),
+        ("3 close the claw", target, CLAW_CLOSED),
+        ("4 pull the weed up", lift, CLAW_CLOSED),
     ]:
-        if point is None:                      # close the claw without moving the arm
-            steps.append((label, dict(steps[-1][1], claw=claw)))
-            continue
-        pose, pitch, problem = best_grab_pose(point, claw)
-        if problem:
-            return steps, f"step '{label}': {problem}"
-        tag = f"  [claw angle {pitch:.0f} deg]" if pitch is not None else "  [normal grab]"
-        steps.append((label + tag, pose))
+        pose, err = ik_pose(point, claw)
+        if err > MAX_IK_ERROR_MM:
+            return steps, f"step '{label}': IK error {err:.1f} mm (out of reach)"
+        below = pose_below_table(pose)
+        if below:
+            return steps, f"step '{label}': {below} (below the table)"
+        steps.append((label, pose))
     if BIN_POSE is None:
         return steps, "BIN_POSE is not set (see the TODO near the top of the file)"
     b, a1, e, ti = BIN_POSE
@@ -808,16 +696,8 @@ def _plan_pick(target_xyz, forward_mm):
     below = pose_below_table(bin_pose)
     if below:
         return steps, f"BIN_POSE: {below} (below the table)"
-    ca1, ce, cti = CARRY_POSE
-    high_here = {"base": steps[-1][1]["base"], "arm1": ca1, "elbow": ce, "tiltWrist": cti,
-                 "twistWrist": TWIST_ANGLE, "claw": CLAW_CLOSED}
-    high_bin = dict(high_here, base=b)
-    steps.append(("6 raise the arm HIGH (base not turning yet)", high_here))
-    steps.append(("7 turn to the wastebasket while high", high_bin))
-    steps.append(("8 lower into the wastebasket", bin_pose))
-    steps.append(("9 open the claw (drop the weed)", dict(bin_pose, claw=CLAW_OPEN)))
-    steps.append(("10 raise the arm HIGH again", dict(high_bin, claw=CLAW_OPEN)))
-    steps.append(("11 turn back while high", dict(high_bin, base=HOME_BASE, claw=CLAW_OPEN)))
+    steps.append(("5 carry to the wastebasket", bin_pose))
+    steps.append(("6 open the claw (drop the weed)", dict(bin_pose, claw=CLAW_OPEN)))
     return steps, None
 
 
@@ -827,7 +707,7 @@ def run_pick(ser, steps):
         send_move(ser, pose)
         if "claw" in label:
             time.sleep(GRIP_SETTLE_S)
-    print("  >> 12 go HOME (out of the camera view)", flush=True)
+    print("  >> 7 go HOME (out of the camera view)", flush=True)
     send_home(ser)
 
 
