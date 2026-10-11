@@ -197,6 +197,51 @@ MAX_TARGET_Z_MM = 600.0
 DETECTION_WAIT_SECONDS = 1.0
 MAX_IK_ERROR_MM = 10.0  # skip targets the arm cannot reach accurately
 
+# =====================================================================
+# Pick-and-place settings (pause scan -> grab -> wastebasket -> wait -> scan)
+# =====================================================================
+# Claw servo values. TODO: check with C+ / C- in the Serial Monitor.
+CLAW_OPEN = 150         # jaws open wide enough to go around the stem
+CLAW_CLOSED = 100       # measured 2026-10-11: jaws closed on the stem
+TWIST_ANGLE = 90        # twistWrist during the whole pick
+
+# Claw FACING the plant: the jaws point straight at the stem from the base side.
+# GRAB_PITCH_DEG = angle of the jaws vs the table: 0 = level (facing the stem),
+# -90 = pointing straight down. The program tries GRAB_PITCH_DEG first, then tilts
+# down in 5-degree steps until the arm can reach without touching the table.
+FACE_PLANT = True
+GRAB_PITCH_DEG = 0.0
+MIN_GRAB_PITCH_DEG = -90.0
+FORWARD_MM = 30.0       # go down this far SHORT of the stem (toward the base), then move forward onto it
+APPROACH_MM = 50.0      # first move this far ABOVE the stem, then go straight down
+LIFT_MM = 100.0         # after grabbing, pull the weed up this far before carrying it
+GRIP_SETTLE_S = 0.6     # time for the claw to close / open
+WAIT_AFTER_PICK_S = 10  # pause before scanning again (change with --wait-after)
+# Extra servo degrees added to the GRAB moves (steps 1-5) after IK.
+# Order matches MOVE: base, arm1, elbow, twistWrist, tiltWrist, claw.
+# Example: IK says MOVE 30 90 120 90 10 150 -> sent as MOVE 30 90 130 90 10 150.
+# Not applied to the carry / wastebasket / HOME poses.
+PICK_SERVO_OFFSET = {"base": 0, "arm1": 0, "elbow": 10,
+                     "twistWrist": 0, "tiltWrist": 0, "claw": 0}   # tilt now set by FACE_PLANT
+# Same min/max as the Arduino sketch; the offset pose is clamped to these.
+ARDUINO_LIMITS = {"base": (0, 160), "arm1": (30, 150), "elbow": (10, 150),
+                  "twistWrist": (0, 179), "tiltWrist": (10, 100), "claw": (100, 179)}  # tilt max raised to 100: change tiltWristMaxAngle in the .ino too
+CONFIRM_FRAMES = 3      # weed must be seen this many frames in a row (same spot) first
+CONFIRM_RADIUS_MM = 20.0
+MIN_Z_MM = 5.0          # refuse any pose that puts elbow/wrist/claw below the table
+
+# Servo angles above the wastebasket (base, arm1, elbow, tiltWrist).
+# TODO: find these with the Serial Monitor (jog with MOVE until the claw is over the
+# basket, high enough to clear the rim), then fill them in. Example: (130, 60, 110, 30)
+# While this is None the robot will detect and plan, but will NOT pick.
+# Safe HIGH pose for turning the base (arm1, elbow, tiltWrist). The base only turns while
+# the arm is in this pose, so the claw/weed passes OVER the side of the wastebasket.
+# (30, 130, 30) puts the claw about 345 mm above the table. If it still hits, lower
+# tiltWrist (claw points up more) or ask for a new pose.
+CARRY_POSE = (30, 130, 30)
+HOME_BASE = 30          # base angle of the Arduino HOME pose
+BIN_POSE = (160, 50, 150, 50)   # base, arm1, elbow, tiltWrist (measured 2026-10-11)
+
 
 def fk(q):
     q1, q2, q3, q4 = q
@@ -381,7 +426,7 @@ def run_fk_verification(args):
                 ser.write((cmd + "\n").encode("ascii"))
                 ser.flush()
                 if not wait_for_arduino_move(ser):
-                    print("  WARNING: B+ no 'Moved to absolute pose' reply; check the arm before measuring.")
+                    print("  WARNING: no 'Moved to absolute pose' reply; check the arm before measuring.")
                 time.sleep(0.5)  # let the arm settle
             else:
                 print("  (dry-run) send this MOVE yourself in Serial Monitor.")
@@ -600,11 +645,204 @@ def build_move_command(pose):
 
 
 def send_move(ser, pose):
+    """Send MOVE and wait until the Arduino reports the move is finished."""
     cmd = build_move_command(pose)
     print("Arduino MOVE command:", cmd, flush=True)
+    ser.reset_input_buffer()
     ser.write((cmd + "\n").encode("ascii"))
     ser.flush()
-    time.sleep(0.3)
+    if not wait_for_arduino_move(ser):
+        print("  WARNING: no 'Moved to absolute pose' reply from Arduino.", flush=True)
+    time.sleep(0.2)
+
+
+def send_home(ser):
+    print("Arduino command: HOME", flush=True)
+    ser.reset_input_buffer()
+    ser.write(b"HOME\n")
+    ser.flush()
+    end = time.time() + 15
+    while time.time() < end:
+        try:
+            line = ser.readline().decode("ascii", errors="ignore").strip()
+        except serial.SerialException as exc:
+            print(f"SERIAL ERROR: {exc}")
+            print(SERIAL_HELP.format(port=ser.port))
+            raise SystemExit(1)
+        if "Moved to HOME pose" in line:
+            break
+    time.sleep(0.2)
+
+
+def pose_below_table(pose):
+    pts = fk_points_from_servo(pose)
+    for name in ("elbow", "tilt_wrist", "claw_middle"):
+        if pts[name][2] < MIN_Z_MM:
+            return f"{name} would be at z = {pts[name][2]:.0f} mm"
+    return None
+
+
+def ik_facing(target_xyz, pitch_deg):
+    """Exact IK with a fixed claw angle. Returns (servo pose, None) or (None, reason)."""
+    x, y, z = [float(v) for v in target_xyz]
+    r = math.hypot(x, y)
+    line = math.radians(pitch_deg + CLAW_LINE_AT_REF)   # direction of the wrist->claw-middle line
+    rw = r - L3 * math.cos(line)
+    zw = z - L3 * math.sin(line) - BASE_HEIGHT
+    d2 = rw * rw + zw * zw
+    c3 = (d2 - L1 * L1 - L2 * L2) / (2 * L1 * L2)
+    if abs(c3) > 1.0:
+        return None, "out of reach"
+    q3 = -math.acos(c3)                                   # elbow above the wrist
+    q2 = math.atan2(zw, rw) - math.atan2(L2 * math.sin(q3), L1 + L2 * math.cos(q3))
+    q4 = line - q2 - q3
+    q1 = math.atan2(y, x)
+    pose = {
+        "base": geom_to_servo("base", math.degrees(q1)),
+        "arm1": geom_to_servo("arm1", math.degrees(q2)),
+        "elbow": geom_to_servo("elbow", math.degrees(q3)),
+        "tiltWrist": geom_to_servo("tiltWrist", math.degrees(q4)),
+    }
+    for name, v in pose.items():
+        lo, hi = ARDUINO_LIMITS[name]
+        if not (lo - 0.5 <= v <= hi + 0.5):
+            return None, f"{name} would need servo {v:.0f} (limit {lo}-{hi})"
+    return {k: int(round(v)) for k, v in pose.items()}, None
+
+
+def ik_pose(target_xyz, claw, pitch_deg=None):
+    if pitch_deg is not None:
+        pose, why = ik_facing(target_xyz, pitch_deg)
+        if pose is None:
+            return None, why
+        pose["twistWrist"] = TWIST_ANGLE
+        pose["claw"] = claw
+        for name, extra in PICK_SERVO_OFFSET.items():
+            lo, hi = ARDUINO_LIMITS[name]
+            pose[name] = min(max(pose[name] + extra, lo), hi)
+        return pose, 0.0
+    return ik_pose_free(target_xyz, claw)
+
+
+def ik_pose_free(target_xyz, claw):
+    """IK for a point; returns (pose, error_mm)."""
+    q = ik_point(np.asarray(target_xyz, dtype=float))
+    pose = q_to_pose_deg(q)
+    pose["twistWrist"] = TWIST_ANGLE
+    pose["claw"] = claw
+    for name, extra in PICK_SERVO_OFFSET.items():
+        lo, hi = ARDUINO_LIMITS[name]
+        pose[name] = min(max(pose[name] + extra, lo), hi)
+    err = float(np.linalg.norm(fk(q) - target_xyz))
+    return pose, err
+
+
+def plan_pick(target_xyz):
+    """Try the full forward slide first; if the start point is out of reach, use a shorter slide."""
+    first = None
+    for fwd in (FORWARD_MM, FORWARD_MM * 2 / 3, FORWARD_MM / 3, 0.0):
+        steps, problem = _plan_pick(target_xyz, fwd)
+        if first is None:
+            first = (steps, problem)
+        if problem is None or "BIN_POSE" in problem:
+            if fwd != FORWARD_MM:
+                print(f"  (forward slide shortened to {fwd:.0f} mm so the arm can reach)")
+            return steps, problem
+    return first
+
+
+def best_grab_pose(point, claw):
+    """Most level claw angle (facing the plant) that is reachable and stays above the table.
+    Returns (pose, pitch_deg or None, problem)."""
+    last = "out of reach"
+    if FACE_PLANT:
+        for pitch in np.arange(GRAB_PITCH_DEG, MIN_GRAB_PITCH_DEG - 0.1, -5.0):
+            pose, why = ik_pose(point, claw, float(pitch))
+            if pose is None:
+                last = why
+                continue
+            below = pose_below_table(pose)
+            if below:
+                last = below + " (below the table)"
+                continue
+            return pose, float(pitch), None
+    pose, err = ik_pose_free(point, claw)
+    if err > MAX_IK_ERROR_MM:
+        return None, None, f"IK error {err:.1f} mm (out of reach); facing grab: {last}"
+    below = pose_below_table(pose)
+    if below:
+        return None, None, below + " (below the table)"
+    return pose, None, None
+
+
+def _plan_pick(target_xyz, forward_mm):
+    """Plan every step BEFORE moving. Returns (steps, problem). steps = [(label, pose)]."""
+    target = np.asarray(target_xyz, dtype=float)
+    # unit vector pointing from the base outward to the stem (horizontal)
+    r = float(np.hypot(target[0], target[1]))
+    outward = np.array([target[0] / r, target[1] / r, 0.0]) if r > 1e-6 else np.array([1.0, 0.0, 0.0])
+    behind = target - forward_mm * outward
+    hover = behind + np.array([0.0, 0.0, APPROACH_MM])
+    lift = target + np.array([0.0, 0.0, LIFT_MM])
+    steps = []
+    for label, point, claw in [
+        ("1 move above, just short of the weed (claw open)", hover, CLAW_OPEN),
+        ("2 go down beside the stem", behind, CLAW_OPEN),
+        ("3 move forward onto the stem", target, CLAW_OPEN),
+        ("4 close the claw", None, CLAW_CLOSED),
+        ("5 pull the weed up", lift, CLAW_CLOSED),
+    ]:
+        if point is None:                      # close the claw without moving the arm
+            steps.append((label, dict(steps[-1][1], claw=claw)))
+            continue
+        pose, pitch, problem = best_grab_pose(point, claw)
+        if problem:
+            return steps, f"step '{label}': {problem}"
+        tag = f"  [claw angle {pitch:.0f} deg]" if pitch is not None else "  [normal grab]"
+        steps.append((label + tag, pose))
+    if BIN_POSE is None:
+        return steps, "BIN_POSE is not set (see the TODO near the top of the file)"
+    b, a1, e, ti = BIN_POSE
+    bin_pose = {"base": b, "arm1": a1, "elbow": e, "tiltWrist": ti,
+                "twistWrist": TWIST_ANGLE, "claw": CLAW_CLOSED}
+    below = pose_below_table(bin_pose)
+    if below:
+        return steps, f"BIN_POSE: {below} (below the table)"
+    ca1, ce, cti = CARRY_POSE
+    high_here = {"base": steps[-1][1]["base"], "arm1": ca1, "elbow": ce, "tiltWrist": cti,
+                 "twistWrist": TWIST_ANGLE, "claw": CLAW_CLOSED}
+    high_bin = dict(high_here, base=b)
+    steps.append(("6 raise the arm HIGH (base not turning yet)", high_here))
+    steps.append(("7 turn to the wastebasket while high", high_bin))
+    steps.append(("8 lower into the wastebasket", bin_pose))
+    steps.append(("9 open the claw (drop the weed)", dict(bin_pose, claw=CLAW_OPEN)))
+    steps.append(("10 raise the arm HIGH again", dict(high_bin, claw=CLAW_OPEN)))
+    steps.append(("11 turn back while high", dict(high_bin, base=HOME_BASE, claw=CLAW_OPEN)))
+    return steps, None
+
+
+def run_pick(ser, steps):
+    for label, pose in steps:
+        print(f"  >> {label}", flush=True)
+        send_move(ser, pose)
+        if "claw" in label:
+            time.sleep(GRIP_SETTLE_S)
+    print("  >> 12 go HOME (out of the camera view)", flush=True)
+    send_home(ser)
+
+
+def paused_wait(seconds, window="stem target"):
+    """Wait while keeping the camera window responsive. Returns False if Q/Esc pressed."""
+    end = time.time() + seconds
+    while time.time() < end:
+        left = int(end - time.time()) + 1
+        print(f"\r  scanning resumes in {left:2d} s ", end="", flush=True)
+        key = cv2.waitKey(200) & 0xFF
+        if key in (27, ord("q")):
+            print()
+            return False
+    print()
+    return True
 
 
 def parse_args() -> argparse.Namespace:
@@ -616,6 +854,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iou", type=float, default=0.7, help="NMS IoU threshold")
     parser.add_argument("--imgsz", type=int, default=640, help="Model image size")
     parser.add_argument("--device", type=str, default="cpu", help="Model device")
+    parser.add_argument(
+        "--wait-after",
+        type=float,
+        default=WAIT_AFTER_PICK_S,
+        help="Seconds to wait after dropping a weed before scanning again (default 10)",
+    )
     parser.add_argument(
         "--check-pose",
         type=float,
@@ -672,13 +916,23 @@ def main():
     align = AlignFilter(align_to_stream=OBStreamType.COLOR_STREAM)
     frame_number = 0
     ser = None
+    confirm_count = 0
+    confirm_xyz = None
+    picked = 0
 
     try:
         if not args.dry_run:
             print(f"Opening Arduino serial connection on {args.port}...", flush=True)
-            ser = serial.Serial(args.port, 9600, timeout=1)
+            try:
+                ser = serial.Serial(args.port, 9600, timeout=0.5, exclusive=True)
+            except (serial.SerialException, OSError) as exc:
+                print(f"Cannot open {args.port}: {exc}")
+                print(SERIAL_HELP.format(port=args.port))
+                return
             # Opening a Uno serial port may reset the board; allow setup() to finish once.
             time.sleep(2)
+            ser.reset_input_buffer()
+            send_home(ser)
 
         while True:
             frame_number += 1
@@ -795,37 +1049,53 @@ def main():
                     continue
 
                 robot_xyz = camera_to_robot(camera_xyz)
-                q = ik_point(robot_xyz)
-                pose = q_to_pose_deg(q)
-                command = build_move_command(pose)
-                ik_error_mm = float(np.linalg.norm(fk(q) - robot_xyz))
 
+                # --- make sure it's the same weed for a few frames (avoid false hits) ---
+                if confirm_xyz is not None and np.linalg.norm(robot_xyz - confirm_xyz) <= CONFIRM_RADIUS_MM:
+                    confirm_count += 1
+                    confirm_xyz = 0.5 * (confirm_xyz + robot_xyz)
+                else:
+                    confirm_count = 1
+                    confirm_xyz = robot_xyz.copy()
+                if confirm_count < CONFIRM_FRAMES:
+                    continue
+                target_xyz = confirm_xyz.copy()
+                confirm_count, confirm_xyz = 0, None
+
+                print("\n================ WEED FOUND: SCANNING PAUSED ================")
                 print(f"detection_confidence: {float(best.conf[0]):.3f}")
                 print(f"stem_pixel: ({x_center:.1f}, {stem_y:.1f}, {camera_xyz[2]:.1f})")
                 print(f"valid_depth_samples: {depth_sample_count}")
                 print("camera_xyz:", np.round(camera_xyz, 2))
-                print("robot_xyz:", np.round(robot_xyz, 2))
-                print(f"ik_error_mm: {ik_error_mm:.2f}")
-                print("pose_deg:", pose)
-                print("Arduino MOVE command:", command, flush=True)
+                print("robot_xyz (target):", np.round(target_xyz, 2))
 
-                if ik_error_mm > MAX_IK_ERROR_MM:
-                    print(
-                        f"IK error {ik_error_mm:.1f} mm > {MAX_IK_ERROR_MM:.1f} mm; "
-                        f"target out of reach, not sending MOVE.",
-                        flush=True,
-                    )
-                elif args.dry_run:
-                    print("Dry-run: not sending MOVE command.")
+                steps, problem = plan_pick(target_xyz)
+                for label, pose in steps:
+                    print(f"  plan {label}: {build_move_command(pose)}")
+
+                if problem:
+                    print(f"NOT picking: {problem}", flush=True)
+                    cv2.waitKey(1)
+                    time.sleep(DETECTION_WAIT_SECONDS)
+                    print("Scanning again.\n", flush=True)
+                    continue
+
+                if args.dry_run:
+                    print("Dry-run: plan only, arm not moved.")
                 else:
                     assert ser is not None
-                    send_move(ser, pose)
+                    run_pick(ser, steps)
+                    picked += 1
+                    print(f"Weed #{picked} in the wastebasket.", flush=True)
 
-                print(
-                    f"Waiting {DETECTION_WAIT_SECONDS:.0f} seconds before detecting again.",
-                    flush=True,
-                )
-                time.sleep(DETECTION_WAIT_SECONDS)
+                print(f"Waiting {args.wait_after:.0f} s before scanning again...", flush=True)
+                if not paused_wait(args.wait_after):
+                    break
+                # throw away camera frames that were queued while the arm was moving
+                drain_end = time.time() + 0.5
+                while time.time() < drain_end:
+                    pipeline.wait_for_frames(100)
+                print("================ SCANNING RESUMED ================\n", flush=True)
 
             elif args.debug:
                 print(f"[debug] frame {frame_number}: no detections", flush=True)

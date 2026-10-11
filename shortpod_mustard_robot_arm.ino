@@ -54,8 +54,8 @@ const byte ARM1_PIN = 9;
 const byte ARM2_PIN = 10;
 const byte BASE_PIN = 11;
 
-const int small_movement = 2;
-const int mid_movement = 5;
+const int small_movement = 5;
+const int mid_movement = 10;
 const int big_movement = 20;
 const int MOVE_STEP_DELAY_MS = 15;
 

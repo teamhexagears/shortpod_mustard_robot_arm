@@ -151,5 +151,21 @@ pose: base 25 arm1 86 elbow 107 tilt 20 claw 150   ->  claw middle x=394 y=-53 z
 
 next time we'll tell ai to first pause the scanning then grab the mustard, then put it in 
 the wastebasket then wait 10 secs and continue scanning.
+let the wrist turn so the claw is FACING THE plant
+help me do it with a file
+turn the wrist more
+when the base turns to the wastebasket it hits the side of the box make the arm go higher
+claw is 100
+Claw    = 150
+Tilt Wrist = 50
+Twist Wrist = 90
+Elbow   = 150
+Arm 1   = 50
+Arm 2   = 130
+Base    = 160
+we'll tell ai to first pause the scanning then grab the mustard, then put it in 
+the wastebasket then wait 10 secs and continue scanning.
+when i run python calibrate_camera_to_robot.py there is a limit (clamped to the Ardiuno safty limits can we remove it for now
+========================================================
 
 ask ai how to solve the lagging issue
