@@ -72,7 +72,7 @@ int tiltWristMinAngle = 0;   // lowered from 10 so the claw can tilt up more
 int twistWristMinAngle = 0;
 int elbowMinAngle = 10;
 int arm1MinAngle = 30;
-int baseMinAngle = 0;
+int baseMinAngle = -180;
 
 // Maximum safe angles for each joint
 int clawMaxAngle = 179;

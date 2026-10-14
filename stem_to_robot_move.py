@@ -252,7 +252,7 @@ WAIT_AFTER_PICK_S = 10  # pause before scanning again (change with --wait-after)
 # -30 / -22 gives the same claw position as the old "elbow +10" servo offset.
 GRAB_FORWARD_MM = 40.0   # 2026-10-13: +10 mm more forward (was 30)
 GRAB_LEFT_MM = 15.0      # sideways: + = more to the LEFT (seen from behind), - = right (2026-10-13: was landing right)
-GRAB_Z_MM = 38.0         # 2026-10-13: halfway between the "too high" and "too low" versions
+GRAB_Z_MM = 23.0         # 2026-10-13: 15 mm lower (was 38)
 # Extra servo degrees after IK (leave at 0 - servo offsets break the arm coordination).
 PICK_SERVO_OFFSET = {"base": 0, "arm1": 0, "elbow": 0,
                      "twistWrist": 0, "tiltWrist": 0, "claw": 0}
