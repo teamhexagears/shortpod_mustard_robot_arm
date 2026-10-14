@@ -146,8 +146,8 @@ base 25 arm1 86 elbow 107 tilt 20 -> x=394 y=-53  z=100
 ## 6. Pick-and-place cycle (current)
 
 1. Weed confirmed → **SCANNING PAUSED**. Every move is planned and safety-checked first.
-2. Move above the weed, a little short of it, with the claw open.
-3. Go down and forward onto the stem in one smooth move.
+2. Move from HOME directly down to stem height, just short of the weed (`behind` = red-cross − `FORWARD_MM`), claw open.
+3. Extend horizontally forward to grab the weed at the red-cross stem location (`target`).
 4. Close the claw (100).
 5. Pull the weed up 100 mm. The claw starts tilting up.
 6. Raise the arm HIGH with the claw tilted up (`HOLD_TILT = 0`), so the weed doesn't fall.
@@ -169,12 +169,14 @@ The program picks the most level claw angle the arm can reach (`FACE_PLANT = Tru
 
 | Setting | Value | Meaning / history |
 |---|---|---|
-| `GRAB_FORWARD_MM` | **40** | Farther from the base: −30 → −10 → 10 → 20 → 30 → 40 |
+| `FORWARD_MM` | **30** | Distance to extend forward onto stem (claw starts 30 mm short of stem) |
+| `GRAB_FORWARD_MM` | **0** | 0 = grab directly at the red-cross stem (prevents out-of-reach error) |
+| `APPROACH_MM` | **0** | 0 = direct move to stem height; skips hovering over the top of the weed |
 | `GRAB_LEFT_MM` | **15** | It was landing right of the stem |
 | `GRAB_Z_MM` | **23** | −22 too low, ~+98 too high, then 38, then 23 |
 | `CLAW_OPEN` / `CLAW_CLOSED` | 150 / 100 | Measured |
 | `TWIST_ANGLE` | 90 | |
-| `APPROACH_MM` / `LIFT_MM` | 50 / 100 | Hover height / pull-up height |
+| `LIFT_MM` | 100 | Pull-up height after grab |
 | `HOLD_TILT` | 0 | Claw tilted up while holding the weed |
 | `CARRY_POSE` | (30, 130, 30) | arm1, elbow, tilt for turning high. Claw about 350 mm up |
 | `BIN_POSE` | **(170, 50, 150, 50)** | Base turned farther (was 160) |
@@ -194,6 +196,7 @@ The program picks the most level claw angle the arm can reach (`FACE_PLANT = Tru
 | Oct 8 | Added a `--no-limits` option to the calibration script |
 | Oct 11 | Pick-and-place cycle: pause → grab → wastebasket → wait → scan. Bin pose, claw closed = 100. High carry so the arm doesn't hit the box. Fixed "Device or resource busy" (Arduino IDE `serial-monitor` holding the port) |
 | Oct 11–13 | Grab tuning: forward slide, wrist tilt limit raised to 100, then claw-facing angle search. Never below the table (auto-raise). Straight-line path, then coordinated Arduino `MOVE` (all joints together, no stops). Tilt min 0. Elbow direction test (back to +1). Grab height/forward/left corrections. Claw tilted up while carrying. Base to 170 for the bin (limit 180) |
+| Oct 13 | Grab accuracy tuning: replaced diagonal downward approach with 2-stage grab: descent in Z axis to red-cross stem height, then horizontal extension forward to grab the weed. |
 
 ---
 

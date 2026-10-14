@@ -240,19 +240,26 @@ TWIST_ANGLE = 90        # twistWrist during the whole pick
 FACE_PLANT = True
 GRAB_PITCH_DEG = 0.0
 MIN_GRAB_PITCH_DEG = -90.0
-FORWARD_MM = 30.0       # go down this far SHORT of the stem (toward the base), then move forward onto it
-APPROACH_MM = 50.0      # first move this far ABOVE the stem, then go straight down
+# Trajectory tuning:
+# 1. First step: move from HOME down to stem height (at 'behind' = red-cross - FORWARD_MM)
+# 2. Second step: extend horizontally forward onto the stem (to red-cross location)
+#
+# APPROACH_MM:
+#   0.0  = move directly down to stem height (no hover above the top of the weed)
+#   > 0  = first hover this high above stem height before descending
+APPROACH_MM = 0.0       # 0.0 = direct descent to stem height (skip top-of-weed hover)
+FORWARD_MM = 30.0       # distance to extend forward to grab the weed (claw starts 30 mm short of stem)
 LIFT_MM = 100.0         # after grabbing, pull the weed up this far before carrying it
 GRIP_SETTLE_S = 0.6     # time for the claw to close / open
 WAIT_AFTER_PICK_S = 10  # pause before scanning again (change with --wait-after)
-# Grab-point correction in MILLIMETERS (not servo degrees), so shoulder, elbow and wrist
-# are all solved together and the claw lands where you want.
-#   GRAB_FORWARD_MM: + = farther from the base, - = closer to the base
-#   GRAB_Z_MM:       + = higher,                 - = lower
-# -30 / -22 gives the same claw position as the old "elbow +10" servo offset.
-GRAB_FORWARD_MM = 40.0   # 2026-10-13: +10 mm more forward (was 30)
-GRAB_LEFT_MM = 15.0      # sideways: + = more to the LEFT (seen from behind), - = right (2026-10-13: was landing right)
-GRAB_Z_MM = 23.0         # 2026-10-13: 15 mm lower (was 38)
+# Grab-point correction in MILLIMETERS:
+#   GRAB_FORWARD_MM: offset beyond the red cross (0.0 = grab right at red-cross stem location;
+#                    positive values push the grab farther away from the robot base)
+#   GRAB_LEFT_MM:    sideways centering (+ = LEFT seen from behind, - = right)
+#   GRAB_Z_MM:       vertical height offset at stem level
+GRAB_FORWARD_MM = 0.0   # 0.0 = target is right at the red-cross stem (avoids out-of-reach error)
+GRAB_LEFT_MM = 15.0      # sideways: + = more to the LEFT (seen from behind), - = right (was landing right)
+GRAB_Z_MM = 23.0         # stem grab height offset above table (mm)
 # Extra servo degrees after IK (leave at 0 - servo offsets break the arm coordination).
 PICK_SERVO_OFFSET = {"base": 0, "arm1": 0, "elbow": 0,
                      "twistWrist": 0, "tiltWrist": 0, "claw": 0}
@@ -279,7 +286,7 @@ CARRY_POSE = (30, 130, 30)
 # 0 -> claw about 13 deg above level in the carry pose (30 -> 11 deg below level).
 HOLD_TILT = 0
 HOME_BASE = 30          # base angle of the Arduino HOME pose
-BIN_POSE = (170, 50, 150, 50)   # base, arm1, elbow, tiltWrist (measured 2026-10-11)
+BIN_POSE = (150, 50, 150, 50)   # base, arm1, elbow, tiltWrist (measured 2026-10-11)
 
 
 def fk(q):
@@ -651,8 +658,12 @@ def depth_to_camera_xyz(depth_frame, x_px, y_px, radius=4, color_frame=None):
     if valid_samples.size == 0:
         return None, 0
 
-    # Median rejects isolated depth holes/outliers near the box-bottom pixel.
-    z_mm = float(np.median(valid_samples))
+    # Reject background bleed: the stem is in the foreground (closer to camera).
+    # If the window spans both a narrow stem and the table/wall behind it,
+    # isolate the samples within 60 mm of the nearest return, then take their median.
+    min_depth = float(np.min(valid_samples))
+    foreground_samples = valid_samples[valid_samples <= min_depth + 60.0]
+    z_mm = float(np.median(foreground_samples))
     if not np.isfinite(z_mm) or z_mm <= 0:
         return None, int(valid_samples.size)
 
@@ -790,12 +801,15 @@ def plan_pick(target_xyz):
     return first
 
 
-def best_grab_pose(point, claw):
+def best_grab_pose(point, claw, preferred_pitch=None):
     """Most level claw angle (facing the plant) that is reachable and stays above the table.
     Returns (pose, pitch_deg or None, problem)."""
     last = "out of reach"
     if FACE_PLANT:
-        for pitch in np.arange(GRAB_PITCH_DEG, MIN_GRAB_PITCH_DEG - 0.1, -5.0):
+        pitch_list = list(np.arange(GRAB_PITCH_DEG, MIN_GRAB_PITCH_DEG - 0.1, -5.0))
+        if preferred_pitch is not None:
+            pitch_list = [preferred_pitch] + [p for p in pitch_list if abs(p - preferred_pitch) > 1e-3]
+        for pitch in pitch_list:
             pose, why = ik_pose(point, claw, float(pitch))
             if pose is None:
                 last = why
@@ -814,13 +828,13 @@ def best_grab_pose(point, claw):
     return pose, None, None
 
 
-def solve_key_point(point, claw):
+def solve_key_point(point, claw, preferred_pitch=None):
     """Best pose for one point, raised in 5 mm steps if it would go below the table.
     Returns (pose, used_point, pitch, raise_mm, problem)."""
     problem = None
     for raise_mm in np.arange(0.0, MAX_RAISE_MM + 0.1, 5.0):
         used = point + np.array([0.0, 0.0, raise_mm])
-        pose, pitch, problem = best_grab_pose(used, claw)
+        pose, pitch, problem = best_grab_pose(used, claw, preferred_pitch=preferred_pitch)
         if problem is None:
             return pose, used, pitch, raise_mm, None
         if "below the table" not in problem:
@@ -868,28 +882,94 @@ def _plan_pick(target_xyz, forward_mm):
     behind = target - forward_mm * outward
     hover = behind + np.array([0.0, 0.0, APPROACH_MM])
     lift = target + np.array([0.0, 0.0, LIFT_MM])
-    steps = []
-    prev = None   # (used_point, pitch)
-    for label, point, claw in [
-        ("1 move above, just short of the weed", hover, CLAW_OPEN),
-        ("2 go down and forward onto the stem", target, CLAW_OPEN),
-        ("3 close the claw", None, CLAW_CLOSED),
-        ("4 pull the weed up", lift, CLAW_CLOSED),
-    ]:
-        if point is None:                      # close the claw without moving the arm
-            steps.append((label, dict(steps[-1][1], claw=claw)))
-            continue
-        pose, used, pitch, raise_mm, problem = solve_key_point(point, claw)
+
+    # 1. Target (grab point on stem / red-cross location)
+    pose_target, used_target, pitch_target, raise_target, problem = solve_key_point(target, CLAW_OPEN)
+    if problem:
+        return [], f"step 'target': {problem}"
+
+    # 2. Behind (stem height, short of weed)
+    pose_behind, used_behind, pitch_behind, raise_behind, problem = solve_key_point(
+        behind, CLAW_OPEN, preferred_pitch=pitch_target
+    )
+    if problem:
+        return [], f"step 'behind': {problem}"
+
+    # 3. Hover (above behind, only if APPROACH_MM > 0)
+    if APPROACH_MM > 0:
+        hover = behind + np.array([0.0, 0.0, APPROACH_MM])
+        pose_hover, used_hover, pitch_hover, raise_hover, problem = solve_key_point(
+            hover, CLAW_OPEN, preferred_pitch=pitch_behind
+        )
         if problem:
-            return steps, f"step '{label}': {problem}"
-        tag = f"  [claw angle {pitch:.0f} deg]" if pitch is not None else "  [normal grab]"
-        if raise_mm > 0:
-            tag += f"  [raised {raise_mm:.0f} mm to stay above the table]"
-        if prev is None:
-            steps.append((label + tag, pose))
-        else:
-            steps += straight_path(label + tag, prev[0], prev[1], used, pitch, claw, pose)
-        prev = (used, pitch)
+            return [], f"step 'hover': {problem}"
+    else:
+        pose_hover = None
+
+    # 4. Lift (pull weed up)
+    pose_lift, used_lift, pitch_lift, raise_lift, problem = solve_key_point(
+        lift, CLAW_CLOSED, preferred_pitch=pitch_target
+    )
+    if problem:
+        return [], f"step 'lift': {problem}"
+
+    steps = []
+    if APPROACH_MM > 0:
+        tag_hover = f"  [claw angle {pitch_hover:.0f} deg]" if pitch_hover is not None else "  [normal grab]"
+        if raise_hover > 0:
+            tag_hover += f"  [raised {raise_hover:.0f} mm to stay above the table]"
+        steps.append(("1 move above, short of the weed" + tag_hover, pose_hover))
+        descent_step_num = 2
+        last_used = used_hover
+        last_pitch = pitch_hover
+    else:
+        descent_step_num = 1
+        last_used = None
+        last_pitch = None
+
+    tag_behind = f"  [claw angle {pitch_behind:.0f} deg]" if pitch_behind is not None else "  [normal grab]"
+    if raise_behind > 0:
+        tag_behind += f"  [raised {raise_behind:.0f} mm to stay above the table]"
+
+    label_behind = f"{descent_step_num} move down to stem height (short of weed)" + tag_behind
+    if last_used is not None:
+        steps += straight_path(
+            label_behind,
+            last_used, last_pitch, used_behind, pitch_behind, CLAW_OPEN, pose_behind
+        )
+    else:
+        steps.append((label_behind, pose_behind))
+
+    if forward_mm > 0:
+        extend_step_num = descent_step_num + 1
+        tag_target = f"  [claw angle {pitch_target:.0f} deg]" if pitch_target is not None else "  [normal grab]"
+        if raise_target > 0:
+            tag_target += f"  [raised {raise_target:.0f} mm to stay above the table]"
+        steps += straight_path(
+            f"{extend_step_num} extend forward to grab the weed" + tag_target,
+            used_behind, pitch_behind, used_target, pitch_target, CLAW_OPEN, pose_target
+        )
+        claw_step_num = extend_step_num + 1
+        last_used = used_target
+        last_pitch = pitch_target
+    else:
+        claw_step_num = descent_step_num + 1
+        last_used = used_behind
+        last_pitch = pitch_behind
+
+    # Close the claw
+    steps.append((f"{claw_step_num} close the claw", dict(steps[-1][1], claw=CLAW_CLOSED)))
+
+    # Pull the weed up
+    lift_step_num = claw_step_num + 1
+    tag_lift = f"  [claw angle {pitch_lift:.0f} deg]" if pitch_lift is not None else "  [normal grab]"
+    if raise_lift > 0:
+        tag_lift += f"  [raised {raise_lift:.0f} mm to stay above the table]"
+    steps += straight_path(
+        f"{lift_step_num} pull the weed up" + tag_lift,
+        last_used, last_pitch, used_lift, pitch_lift, CLAW_CLOSED, pose_lift
+    )
+
     if BIN_POSE is None:
         return steps, "BIN_POSE is not set (see the TODO near the top of the file)"
     b, a1, e, ti = BIN_POSE
@@ -906,13 +986,21 @@ def _plan_pick(target_xyz, forward_mm):
     # empty claw on the way back: normal carry tilt
     back_bin = {"base": b, "arm1": ca1, "elbow": ce, "tiltWrist": cti,
                 "twistWrist": TWIST_ANGLE, "claw": CLAW_OPEN}
-    steps.append(("5 raise the arm HIGH, claw tilted up (base not turning yet)", hold_here))
-    steps.append(("6 turn to the wastebasket while high, claw tilted up", hold_bin))
-    steps.append(("7 lower into the wastebasket, claw still tilted up", dict(bin_pose, tiltWrist=HOLD_TILT)))
-    steps.append(("8 tilt the claw down over the wastebasket", bin_pose))
-    steps.append(("9 open the claw (drop the weed)", dict(bin_pose, claw=CLAW_OPEN)))
-    steps.append(("10 raise the arm HIGH again", back_bin))
-    steps.append(("11 turn back while high", dict(back_bin, base=HOME_BASE)))
+
+    bin_actions = [
+        ("raise the arm HIGH, claw tilted up (base not turning yet)", hold_here),
+        ("turn to the wastebasket while high, claw tilted up", hold_bin),
+        ("lower into the wastebasket, claw still tilted up", dict(bin_pose, tiltWrist=HOLD_TILT)),
+        ("tilt the claw down over the wastebasket", bin_pose),
+        ("open the claw (drop the weed)", dict(bin_pose, claw=CLAW_OPEN)),
+        ("raise the arm HIGH again", back_bin),
+        ("turn back while high", dict(back_bin, base=HOME_BASE)),
+    ]
+    cur_num = lift_step_num + 1
+    for action, pose in bin_actions:
+        steps.append((f"{cur_num} {action}", pose))
+        cur_num += 1
+
     return steps, None
 
 
@@ -922,7 +1010,7 @@ def run_pick(ser, steps):
         send_move(ser, pose)
         if "close the claw" in label or "open the claw" in label or "tilt the claw down" in label:
             time.sleep(GRIP_SETTLE_S)
-    print("  >> 12 go HOME (out of the camera view)", flush=True)
+    print(f"  >> {len(steps) + 1} go HOME (out of the camera view)", flush=True)
     send_home(ser)
 
 
@@ -1163,6 +1251,8 @@ def main():
                 print(f"valid_depth_samples: {depth_sample_count}")
                 print("camera_xyz:", np.round(camera_xyz, 2))
                 print("robot_xyz (target):", np.round(target_xyz, 2))
+                r_dist = float(np.hypot(target_xyz[0], target_xyz[1]))
+                print(f"distance_from_base: {r_dist:.1f} mm (workspace sweet spot: 300-400 mm, max reach: ~435 mm)")
 
                 steps, problem = plan_pick(target_xyz)
                 for label, pose in steps:
@@ -1170,6 +1260,9 @@ def main():
 
                 if problem:
                     print(f"NOT picking: {problem}", flush=True)
+                    if r_dist + GRAB_FORWARD_MM > 435.0:
+                        print(f"  [HINT] With GRAB_FORWARD_MM ({GRAB_FORWARD_MM:.0f} mm), requested reach is {r_dist + GRAB_FORWARD_MM:.1f} mm.")
+                        print(f"         Move the plant ~5 cm closer to the robot base (into the 320-380 mm zone).", flush=True)
                     cv2.waitKey(1)
                     time.sleep(DETECTION_WAIT_SECONDS)
                     print("Scanning again.\n", flush=True)

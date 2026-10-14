@@ -84,11 +84,11 @@ int baseMaxAngle = 180;   // raised from 160 so the base can reach the wastebask
 
 // HOME position angles for each joint (reset position)
 int clawHomeAngle = 150;
-int tiltWristHomeAngle = 50;
+int tiltWristHomeAngle = 5;
 int twistWristHomeAngle = 90;
 int elbowHomeAngle = 150;
 int arm1HomeAngle = 30;
-int baseHomeAngle = 30;
+int baseHomeAngle = 10;
 
 // Initilal joint angles (start at HOME position)
 int clawAngle = clawHomeAngle;
