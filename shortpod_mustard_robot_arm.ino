@@ -54,8 +54,8 @@ const byte ARM1_PIN = 9;
 const byte ARM2_PIN = 10;
 const byte BASE_PIN = 11;
 
-const int small_movement = 5;
-const int mid_movement = 10;
+const int small_movement = 2;
+const int mid_movement = 5;
 const int big_movement = 20;
 const int MOVE_STEP_DELAY_MS = 15;
 
@@ -68,7 +68,7 @@ const int MOVE_STEP_DELAY_MS = 15;
 
 // Minimum safe angles for each joint
 int clawMinAngle = 100;
-int tiltWristMinAngle = 10;
+int tiltWristMinAngle = 0;   // lowered from 10 so the claw can tilt up more
 int twistWristMinAngle = 0;
 int elbowMinAngle = 10;
 int arm1MinAngle = 30;
@@ -76,11 +76,11 @@ int baseMinAngle = 0;
 
 // Maximum safe angles for each joint
 int clawMaxAngle = 179;
-int tiltWristMaxAngle = 70;
+int tiltWristMaxAngle = 100;  // raised from 70 for a deeper wrist tilt when grabbing
 int twistWristMaxAngle = 179;
 int elbowMaxAngle = 150;
 int arm1MaxAngle = 150;
-int baseMaxAngle = 160;
+int baseMaxAngle = 180;   // raised from 160 so the base can reach the wastebasket
 
 // HOME position angles for each joint (reset position)
 int clawHomeAngle = 150;
@@ -132,7 +132,7 @@ void writePose(bool printStatus = true) {
 
 // Route requested poses through the gradual movement routine.
 void applyPose(int base, int arm1, int elbow, int twistWrist, int tiltWrist, int claw) {
-  moveToAbsolutePose(base, arm1, elbow, twistWrist, tiltWrist, claw);
+  moveToAbsolutePose(base, arm1, elbow, twistWrist, tiltWrist, claw, true);
 }
 
 int stepToward(int current, int target) {
@@ -207,7 +207,7 @@ void goHome() {
 }
 
 // Move to an absolute pose: base, arm1, elbow, twistWrist, tiltWrist, claw
-void moveToAbsolutePose(int base, int arm1, int elbow, int twistWrist, int tiltWrist, int claw) {
+void moveToAbsolutePose(int base, int arm1, int elbow, int twistWrist, int tiltWrist, int claw, bool printStatus) {
   const int targetBase = checkAngleBoundary(base, baseMinAngle, baseMaxAngle);
   const int targetArm1 = checkAngleBoundary(arm1, arm1MinAngle, arm1MaxAngle);
   const int targetElbow = checkAngleBoundary(elbow, elbowMinAngle, elbowMaxAngle);
@@ -215,22 +215,32 @@ void moveToAbsolutePose(int base, int arm1, int elbow, int twistWrist, int tiltW
   const int targetTwistWrist = checkAngleBoundary(twistWrist, twistWristMinAngle, twistWristMaxAngle);
   const int targetClaw = checkAngleBoundary(claw, clawMinAngle, clawMaxAngle);
 
-  while (baseAngle != targetBase || arm1Angle != targetArm1 || elbowAngle != targetElbow ||
-         tiltWristAngle != targetTiltWrist || twistWristAngle != targetTwistWrist ||
-         clawAngle != targetClaw) {
-    baseAngle = stepToward(baseAngle, targetBase);
-    arm1Angle = stepToward(arm1Angle, targetArm1);
-    elbowAngle = stepToward(elbowAngle, targetElbow);
-    tiltWristAngle = stepToward(tiltWristAngle, targetTiltWrist);
-    twistWristAngle = stepToward(twistWristAngle, targetTwistWrist);
-    clawAngle = stepToward(clawAngle, targetClaw);
+  // Coordinated move: every joint starts and finishes AT THE SAME TIME.
+  // The joint with the biggest change moves 1 degree per step; the others move
+  // proportionally slower, so the claw follows a smooth path.
+  const int startBase = baseAngle, startArm1 = arm1Angle, startElbow = elbowAngle;
+  const int startTilt = tiltWristAngle, startTwist = twistWristAngle, startClaw = clawAngle;
+  const int dBase = targetBase - startBase, dArm1 = targetArm1 - startArm1;
+  const int dElbow = targetElbow - startElbow, dTilt = targetTiltWrist - startTilt;
+  const int dTwist = targetTwistWrist - startTwist, dClaw = targetClaw - startClaw;
+  int steps = max(max(max(abs(dBase), abs(dArm1)), max(abs(dElbow), abs(dTilt))), max(abs(dTwist), abs(dClaw)));
+  if (steps < 1) steps = 1;
+
+  for (int i = 1; i <= steps; i++) {
+    const float f = (float)i / (float)steps;
+    baseAngle = startBase + (int)lround(dBase * f);
+    arm1Angle = startArm1 + (int)lround(dArm1 * f);
+    elbowAngle = startElbow + (int)lround(dElbow * f);
+    tiltWristAngle = startTilt + (int)lround(dTilt * f);
+    twistWristAngle = startTwist + (int)lround(dTwist * f);
+    clawAngle = startClaw + (int)lround(dClaw * f);
     writePose(false);
 
     delay(MOVE_STEP_DELAY_MS);
   }
 
   writePose(false);
-  showPosition();
+  if (printStatus) showPosition();   // MOVE from Python skips this so moves flow without pauses
 }
 
 // Move one joint by a relative number of degrees
@@ -295,8 +305,11 @@ void turnMotor(const char *jointName, int angle, int delay_ms) {
 // Move all joints to their saved "FLOWER" angles
 void doActionFlower() {
     int sleep_time = 1000;
-
-
+    turnMotor("base", 80, sleep_time);
+    turnMotor("arm1", 140, sleep_time);
+    turnMotor("elbow", 70, sleep_time);
+    turnMotor("tiltWrist", 10, sleep_time);
+    turnMotor("twistWrist", 90, sleep_time);
     turnMotor("claw", 110, sleep_time);
     turnMotor("twistWrist", 155, sleep_time);
     turnMotor("arm1", 60, sleep_time);
@@ -355,9 +368,8 @@ void processCommand(char *cmd) {
       Serial.println(F("MOVE requires 6 values: base arm1 elbow tilt twist claw"));
       return;
     }
-    Serial.println(F("Running moveToAbsolutePose"));
-
-    moveToAbsolutePose(values[0], values[1], values[2], values[3], values[4], values[5]);
+    // No extra printing here: at 9600 baud every printed line pauses the arm.
+    moveToAbsolutePose(values[0], values[1], values[2], values[3], values[4], values[5], false);
     Serial.print(F("Moved to absolute pose: "));
     for (int i = 0; i < 6; i++) {
       Serial.print(values[i]);
@@ -481,6 +493,7 @@ void setup() {
   arm2Servo.attach(ARM2_PIN);
   baseServo.attach(BASE_PIN);
   Serial.println(F("INFO> Running Setup"));
+  Serial.println(F("INFO> Sketch version: 2026-10-13 coordinated MOVE (all joints together)"));
 
   /*
     FIRST TEST SAFETY:
