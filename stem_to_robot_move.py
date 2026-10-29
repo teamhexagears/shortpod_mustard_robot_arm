@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import csv
 import importlib.util
 import sys
 import json
@@ -258,7 +259,7 @@ WAIT_AFTER_PICK_S = 10  # pause before scanning again (change with --wait-after)
 #   GRAB_LEFT_MM:    sideways centering (+ = LEFT seen from behind, - = right)
 #   GRAB_Z_MM:       vertical height offset at stem level
 GRAB_FORWARD_MM = 0.0   # 0.0 = target is right at the red-cross stem (avoids out-of-reach error)
-GRAB_LEFT_MM = 15.0      # sideways: + = more to the LEFT (seen from behind), - = right (was landing right)
+GRAB_LEFT_MM = -7.0      # sideways: + = more to the LEFT (seen from behind), - = right (15 landed ~22 mm left, 2026-10-28)
 GRAB_Z_MM = 23.0         # stem grab height offset above table (mm)
 # Extra servo degrees after IK (leave at 0 - servo offsets break the arm coordination).
 PICK_SERVO_OFFSET = {"base": 0, "arm1": 0, "elbow": 0,
@@ -1004,6 +1005,116 @@ def _plan_pick(target_xyz, forward_mm):
     return steps, None
 
 
+TUNE_LOG_PATH = ROOT / "grab_tune_log.csv"
+TUNE_LOG_FIELDS = [
+    "time", "x", "y", "z", "dist", "angle_deg",
+    "grab_forward", "grab_left", "grab_z", "miss_forward", "miss_left", "miss_up",
+    # for camera refit (calibrate_camera_to_robot.py --from-grabs):
+    "cam_x", "cam_y", "cam_z",                        # stem point seen by the camera
+    "servo_base", "servo_arm1", "servo_elbow", "servo_tilt",   # grab pose actually sent
+    "claw_x", "claw_y", "claw_z",                     # claw middle from FK at that pose
+    "stem_x", "stem_y", "stem_z",                     # claw + miss = where the stem really was
+]
+
+
+def run_tune_grab(ser, steps, target_xyz, camera_xyz):
+    """--tune: go to the grab point with the claw OPEN, stop, ask how far off it is, log it, go HOME."""
+    close_idx = next(i for i, (label, _) in enumerate(steps) if "close the claw" in label)
+    for label, pose in steps[:close_idx]:
+        print(f"  >> {label}", flush=True)
+        send_move(ser, pose)
+    # the Arduino gets whole degrees, so use those for FK
+    grab_pose = {n: int(round(steps[close_idx - 1][1][n])) for n in IK_JOINTS}
+    claw = fk_from_servo(grab_pose)
+    print("\n  TUNE: the claw is at the grab point (claw open). Look at the stem vs the middle of the jaws.")
+    print("  Where is the CLAW compared to the stem? (mm, seen from behind the robot)")
+    print("    forward = claw is farther from the base than the stem, left = claw is left of the stem,")
+    print("    up = how far the arm should go UP (negative = arm should go DOWN).")
+    print("  Negative forward/left = the other way.")
+    print("  Type 'forward left up' (e.g. '0 22 -10' = claw is 22 mm left of the stem, go 10 mm down),")
+    print("  Enter = perfect, 's' = skip (don't log)")
+    miss = None   # logged as how far the claw must MOVE = minus where the claw is
+    while miss is None:   # the arm stays at the grab point until the answer is confirmed
+        reply = input("  claw is> ").strip().lower()
+        if reply == "s":
+            break
+        try:
+            claw_off = [float(v) for v in reply.split()] if reply else [0.0, 0.0, 0.0]
+            assert len(claw_off) == 3
+        except (ValueError, AssertionError):
+            print("  Could not read that. Type 3 numbers in mm, e.g. '0 22 0'.")
+            continue
+        print("  The claw is:")
+        for value, plus, minus, fix_plus, fix_minus, axis in zip(
+                claw_off[:2],
+                ("FARTHER from the base than", "LEFT of"),
+                ("CLOSER to the base than", "RIGHT of"),
+                ("closer to the base", "further RIGHT"),
+                ("farther from the base", "further LEFT"),
+                ("forward/back", "left/right")):
+            if value:
+                where, fix = (plus, fix_plus) if value > 0 else (minus, fix_minus)
+                print(f"    {abs(value):g} mm ({abs(value) / 10:g} cm) {where} the stem"
+                      f"  -> aim {abs(value):g} mm {fix}")
+            else:
+                print(f"    0 mm {axis}")
+        up = claw_off[2]
+        if up:
+            print(f"  The arm should go {abs(up):g} mm ({abs(up) / 10:g} cm) {'UP' if up > 0 else 'DOWN'}")
+        else:
+            print("  The arm should go 0 mm up/down")
+        if input("  Correct? Enter/y = save, n = type again: ").strip().lower() in ("", "y"):
+            # forward/left: where the claw IS -> flip; up: already the move
+            miss = [-claw_off[0] + 0.0, -claw_off[1] + 0.0, up]
+    print(f"  >> go HOME", flush=True)
+    send_home(ser)
+    if miss is None:
+        return
+    t = np.asarray(target_xyz, dtype=float)
+    # forward/left are measured at the claw, pointing away from the base
+    r = float(np.hypot(claw[0], claw[1]))
+    outward = np.array([claw[0] / r, claw[1] / r, 0.0]) if r > 1e-6 else np.array([1.0, 0.0, 0.0])
+    left = np.array([-outward[1], outward[0], 0.0])
+    stem = claw + miss[0] * outward + miss[1] * left + np.array([0.0, 0.0, miss[2]])
+    cam = np.asarray(camera_xyz, dtype=float)
+    row = {
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "x": round(t[0], 1), "y": round(t[1], 1), "z": round(t[2], 1),
+        "dist": round(float(np.hypot(t[0], t[1])), 1),
+        "angle_deg": round(math.degrees(math.atan2(t[1], t[0])), 1),
+        "grab_forward": GRAB_FORWARD_MM, "grab_left": GRAB_LEFT_MM, "grab_z": GRAB_Z_MM,
+        "miss_forward": miss[0], "miss_left": miss[1], "miss_up": miss[2],
+        "cam_x": round(cam[0], 1), "cam_y": round(cam[1], 1), "cam_z": round(cam[2], 1),
+        "servo_base": grab_pose["base"], "servo_arm1": grab_pose["arm1"],
+        "servo_elbow": grab_pose["elbow"], "servo_tilt": grab_pose["tiltWrist"],
+        "claw_x": round(claw[0], 1), "claw_y": round(claw[1], 1), "claw_z": round(claw[2], 1),
+        "stem_x": round(stem[0], 1), "stem_y": round(stem[1], 1), "stem_z": round(stem[2], 1),
+    }
+    if TUNE_LOG_PATH.exists():
+        with TUNE_LOG_PATH.open() as f:
+            old_header = next(csv.reader(f), [])
+        if old_header != TUNE_LOG_FIELDS:
+            old = TUNE_LOG_PATH.with_suffix(time.strftime(".%Y%m%d_%H%M%S.old.csv"))
+            TUNE_LOG_PATH.rename(old)
+            print(f"  old log has different columns; moved it to {old.name}")
+    new_file = not TUNE_LOG_PATH.exists()
+    with TUNE_LOG_PATH.open("a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=TUNE_LOG_FIELDS)
+        if new_file:
+            w.writeheader()
+        w.writerow(row)
+    print(f"  logged to {TUNE_LOG_PATH.name}")
+    with TUNE_LOG_PATH.open() as f:
+        rows = list(csv.DictReader(f))
+    n = len(rows)
+    sug = [np.mean([float(r[f"grab_{k}"]) + float(r[f"miss_{m}"]) for r in rows])
+           for k, m in (("forward", "forward"), ("left", "left"), ("z", "up"))]
+    print(f"  suggested offsets from {n} logged tries: "
+          f"--grab-forward {sug[0]:.0f} --grab-left {sug[1]:.0f} --grab-z {sug[2]:.0f}", flush=True)
+    print(f"  (or, after 8+ tries spread over the work area: "
+          f"python3 calibrate_camera_to_robot.py --from-grabs, then offsets 0)", flush=True)
+
+
 def run_pick(ser, steps):
     for label, pose in steps:
         print(f"  >> {label}", flush=True)
@@ -1055,6 +1166,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Move through VERIFY_POSES, enter ruler measurements, and report FK error (no camera needed)",
     )
+    parser.add_argument("--grab-forward", type=float, default=GRAB_FORWARD_MM,
+                        help=f"Grab offset away from the base, mm (default {GRAB_FORWARD_MM:g})")
+    parser.add_argument("--grab-left", type=float, default=GRAB_LEFT_MM,
+                        help=f"Grab offset to the left seen from behind, mm (default {GRAB_LEFT_MM:g})")
+    parser.add_argument("--grab-z", type=float, default=GRAB_Z_MM,
+                        help=f"Grab height offset, mm (default {GRAB_Z_MM:g})")
+    parser.add_argument("--tune", action="store_true",
+                        help="Grab-offset tuning: stop at the grab point with the claw open, "
+                             "type the miss in mm, log it to grab_tune_log.csv, go HOME")
     parser.add_argument(
         "--debug",
         action="store_true",
@@ -1064,7 +1184,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def main():
+    global GRAB_FORWARD_MM, GRAB_LEFT_MM, GRAB_Z_MM
     args = parse_args()
+    GRAB_FORWARD_MM, GRAB_LEFT_MM, GRAB_Z_MM = args.grab_forward, args.grab_left, args.grab_z
+    print(f"Grab offsets: forward {GRAB_FORWARD_MM:g}  left {GRAB_LEFT_MM:g}  z {GRAB_Z_MM:g} mm", flush=True)
 
     if args.check_pose is not None:
         b, a1, e, ti = args.check_pose
@@ -1270,6 +1393,10 @@ def main():
 
                 if args.dry_run:
                     print("Dry-run: plan only, arm not moved.")
+                elif args.tune:
+                    assert ser is not None
+                    # camera point of the averaged target (inverse of camera_to_robot)
+                    run_tune_grab(ser, steps, target_xyz, R.T @ (target_xyz - t))
                 else:
                     assert ser is not None
                     run_pick(ser, steps)

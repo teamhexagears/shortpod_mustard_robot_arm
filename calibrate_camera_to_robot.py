@@ -19,11 +19,18 @@ Usage:
   python calibrate_camera_to_robot.py                 # full interactive calibration
   python calibrate_camera_to_robot.py --recompute     # refit from saved points
   python calibrate_camera_to_robot.py --recompute --exclude 3,7
+  python calibrate_camera_to_robot.py --from-grabs    # refit from grab_tune_log.csv
+  python calibrate_camera_to_robot.py --from-grabs --with-touch-points --exclude 104
+
+Grab points (--from-grabs) come from `stem_to_robot_move.py --tune`: the camera point of a
+real stem, and where the stem really was (claw middle from FK + the miss you typed in).
+They get ids 101, 102, ... (row 1, 2, ... of the log), so they don't clash with touch points.
 
 IMPORTANT: close the Arduino Serial Monitor first, and do not move the camera after
 calibrating. If the camera moves, run this again.
 """
 import argparse
+import csv
 import json
 import shutil
 import time
@@ -38,6 +45,7 @@ import stem_to_robot_move as arm
 ROOT = Path(__file__).resolve().parent
 TRANSFORM_PATH = ROOT / "camera_to_robot_transform.json"
 POINTS_PATH = ROOT / "camera_calibration_points.json"
+GRAB_ID_START = 101      # grab_tune_log.csv row 1 -> point id 101
 
 JOINTS = ["base", "arm1", "elbow", "tiltWrist"]
 JOG_KEYS = {"b": "base", "a": "arm1", "e": "elbow", "t": "tiltWrist", "c": "claw"}
@@ -101,6 +109,13 @@ def fit_and_report(points, exclude=()):
         print(f"{p['id']:>3} {str(c):>26} {str(r):>26} {e:6.1f}{flag}")
     rms = float(np.sqrt(np.mean(err ** 2)))
     print(f"\nPoints used: {len(used)}   mean: {err.mean():.1f} mm   max: {err.max():.1f} mm   RMS: {rms:.1f} mm")
+    # leave-one-out: fit without each point, then predict it = expected error on a NEW plant
+    loo = []
+    for i in range(len(used)):
+        rest = [j for j in range(len(used)) if j != i]
+        Ri, ti = kabsch([cam[j] for j in rest], [rob[j] for j in rest])
+        loo.append(residuals(Ri, ti, [cam[i]], [rob[i]])[0])
+    print(f"Leave-one-out (expected error on a new plant): mean {np.mean(loo):.1f} mm   max {np.max(loo):.1f} mm")
     if rms <= GOOD_MM:
         print("Result: GOOD (RMS <= 10 mm).")
     elif rms <= 20:
@@ -468,6 +483,27 @@ SAFETY: keep one hand on the servo power switch.
     finish(points, exclude=())
 
 
+def load_grab_points():
+    """Points from stem_to_robot_move.py --tune (grab_tune_log.csv)."""
+    path = arm.TUNE_LOG_PATH
+    if not path.exists():
+        print(f"No {path.name} found. Run: python3 stem_to_robot_move.py --tune ...")
+        return []
+    with path.open() as f:
+        rows = list(csv.DictReader(f))
+    points = []
+    for n, r in enumerate(rows):
+        if not r.get("cam_x"):
+            continue   # logged by an older --tune without camera data
+        points.append({
+            "id": GRAB_ID_START + n,
+            "camera_xyz": [float(r["cam_x"]), float(r["cam_y"]), float(r["cam_z"])],
+            "robot_xyz": [float(r["stem_x"]), float(r["stem_y"]), float(r["stem_z"])],
+        })
+    print(f"{len(points)} grab points from {path.name}")
+    return points
+
+
 def finish(points, exclude):
     res = fit_and_report(points, exclude)
     if res is None:
@@ -493,6 +529,10 @@ def parse_args():
                          "The below-table check stays on.")
     ap.add_argument("--resume", action="store_true", help="continue adding to saved points")
     ap.add_argument("--recompute", action="store_true", help="refit from saved points (no camera/arm)")
+    ap.add_argument("--from-grabs", action="store_true",
+                    help="refit from grab_tune_log.csv (stem_to_robot_move.py --tune); no camera/arm")
+    ap.add_argument("--with-touch-points", action="store_true",
+                    help="with --from-grabs: also use the saved touch points")
     ap.add_argument("--exclude", default="", help="comma-separated point ids to leave out, e.g. 3,7")
     return ap.parse_args()
 
@@ -506,6 +546,14 @@ def main():
         print("         The Arduino still clamps to its own min/max angles unless you change them.")
         print("         The below-table check is still ON. Keep a hand on the power switch.")
     exclude = {int(v) for v in args.exclude.split(",") if v.strip()}
+    if args.from_grabs:
+        points = load_grab_points()
+        if args.with_touch_points and POINTS_PATH.exists():
+            points = json.load(open(POINTS_PATH)) + points
+        finish(points, exclude)
+        print("After saving: set GRAB_FORWARD_MM / GRAB_LEFT_MM / GRAB_Z_MM to 0 "
+              "(the grab points already include where to grab).")
+        return
     if args.recompute:
         if not POINTS_PATH.exists():
             print(f"No {POINTS_PATH.name} found. Run the calibration first.")

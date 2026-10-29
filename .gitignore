@@ -1,1 +1,5 @@
 Log/
+
+# Python cache files (rebuilt automatically when the scripts run)
+__pycache__/
+*.pyc

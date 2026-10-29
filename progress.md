@@ -1,6 +1,6 @@
 # Smart Weeding Robot (智慧拔草機) – Progress
 
-FLL Innovation Project · Last updated: 2026-10-13
+FLL Innovation Project · Last updated: 2026-10-28
 
 ## Goal
 
@@ -32,7 +32,7 @@ camera image -> YOLO finds the plant -> stem pixel + depth -> camera XYZ (mm)
 | Controller | Arduino Uno R3, `Servo.h` library, USB serial at 9600 baud |
 | Arduino sketch | `/home/admin/git/shortpod_mustard_robot_arm/arduino/main.ino` (shared as `shortpod_mustard_robot_arm.ino`) |
 | Computer | Raspberry Pi 5, Python 3.13 venv, port `/dev/ttyACM0` |
-| Camera | Orbbec Gemini 330 series (Gemini 335), color 1706 × 960 |
+| Camera | Orbbec Gemini 335. Default streams: color 1280 × 720 MJPG, depth 848 × 480, both 10 fps. Depth is aligned to color (fx ≈ 692, cx ≈ 641, cy ≈ 364) |
 | Camera mount | Fixed, in front of the robot about 20 cm to the left of the base motor, about 21 cm high. Points straight forward, level with the table, image top = robot forward |
 | Servo power | 5 V 15 A supply. Worst case is about 8.1 A, so there's enough margin |
 | Work surface | White table = z 0. The arm sits on 17 mm plywood |
@@ -116,6 +116,20 @@ On the table, the arm reaches about 270–450 mm from the base. It's most accura
   - Output: `camera_to_robot_transform.json` and `camera_calibration_points.json`.
   - Options: `--resume`, `--recompute --exclude <id>`, `--no-limits` (Python limits off; the below-table check stays on).
 - **Status:** completed 2026-10-07.
+- **Accuracy check (2026-10-28):** RMS 29 mm; leave-one-out (error on a point the fit didn't see) 36 mm. This is the biggest error source, bigger than the arm math (15.5 mm). The errors depend on position, so the constant `GRAB_*` offsets can't fix them. Fitting arm-joint corrections didn't explain them either; most likely the touch points themselves are off by about ±20 mm (lining up the claw on a LEGO tower by eye, 2° jog steps).
+
+### Grab-point recalibration (new, 2026-10-28)
+
+Calibrate with real grabs instead of LEGO towers:
+
+1. `python3 stem_to_robot_move.py --tune ...` with a real plant. The arm stops at the grab point with the claw open.
+2. Type how far the claw must move to be centered on the stem: `forward left up` in mm (e.g. `0 -10 5`).
+   Each try saves the stem's camera XYZ, the grab pose, the claw position (FK), and the true stem position (claw + miss) to `grab_tune_log.csv`.
+3. Repeat 8–10 times with the plant in different spots: near/far, left/right.
+4. `python3 calibrate_camera_to_robot.py --from-grabs` refits R and t and backs up the old file. Grab points get ids 101, 102, …, so you can leave one out with `--exclude 104`. `--with-touch-points` also uses the old LEGO points.
+5. Set `GRAB_FORWARD_MM`, `GRAB_LEFT_MM` and `GRAB_Z_MM` to 0, because the grab points already include where to grab.
+
+Check the **leave-one-out** number in the report: it's the expected error on a new plant.
 
 Example arm positions from the AI notes (pose → claw position from the arm math):
 ```
@@ -172,14 +186,14 @@ The program picks the most level claw angle the arm can reach (`FACE_PLANT = Tru
 | `FORWARD_MM` | **30** | Distance to extend forward onto stem (claw starts 30 mm short of stem) |
 | `GRAB_FORWARD_MM` | **0** | 0 = grab directly at the red-cross stem (prevents out-of-reach error) |
 | `APPROACH_MM` | **0** | 0 = direct move to stem height; skips hovering over the top of the weed |
-| `GRAB_LEFT_MM` | **15** | It was landing right of the stem |
+| `GRAB_LEFT_MM` | **−7** | 0 landed right of the stem → 15. At 15 it landed about 22 mm left (seen from behind), most places → −7 (2026-10-28) |
 | `GRAB_Z_MM` | **23** | −22 too low, ~+98 too high, then 38, then 23 |
 | `CLAW_OPEN` / `CLAW_CLOSED` | 150 / 100 | Measured |
 | `TWIST_ANGLE` | 90 | |
 | `LIFT_MM` | 100 | Pull-up height after grab |
 | `HOLD_TILT` | 0 | Claw tilted up while holding the weed |
 | `CARRY_POSE` | (30, 130, 30) | arm1, elbow, tilt for turning high. Claw about 350 mm up |
-| `BIN_POSE` | **(170, 50, 150, 50)** | Base turned farther (was 160) |
+| `BIN_POSE` | **(150, 50, 150, 50)** | base, arm1, elbow, tiltWrist. Base 150 (160 and 170 were also tried) |
 | `MIN_Z_MM` / `MAX_RAISE_MM` | 5 / 80 | Never below the table: the target is raised automatically if needed |
 | `ELBOW_DIRECTION` | 1 | −1 made the grab about 120 mm too high |
 
@@ -197,6 +211,9 @@ The program picks the most level claw angle the arm can reach (`FACE_PLANT = Tru
 | Oct 11 | Pick-and-place cycle: pause → grab → wastebasket → wait → scan. Bin pose, claw closed = 100. High carry so the arm doesn't hit the box. Fixed "Device or resource busy" (Arduino IDE `serial-monitor` holding the port) |
 | Oct 11–13 | Grab tuning: forward slide, wrist tilt limit raised to 100, then claw-facing angle search. Never below the table (auto-raise). Straight-line path, then coordinated Arduino `MOVE` (all joints together, no stops). Tilt min 0. Elbow direction test (back to +1). Grab height/forward/left corrections. Claw tilted up while carrying. Base to 170 for the bin (limit 180) |
 | Oct 13 | Grab accuracy tuning: replaced diagonal downward approach with 2-stage grab: descent in Z axis to red-cross stem height, then horizontal extension forward to grab the weed. |
+| Oct 28 | Bin base set back to 150: `BIN_POSE` = (150, 50, 150, 50) |
+| Oct 28 | `GRAB_LEFT_MM` 15 → −7: the claw landed about 22 mm left of the stem almost everywhere |
+| Oct 28 | Precision check: the camera calibration (RMS 29 mm) is the biggest error. Added `--tune` grab logging and `--from-grabs` refit |
 
 ---
 
@@ -226,6 +243,10 @@ python3 stem_to_robot_move.py --verify-fk
 # camera calibration
 python3 calibrate_camera_to_robot.py [--resume | --recompute --exclude 4 | --no-limits]
 
+# grab-point recalibration
+python3 stem_to_robot_move.py --port /dev/ttyACM0 --conf 0.3 --weights ai_models/best_v16.pt --tune
+python3 calibrate_camera_to_robot.py --from-grabs [--with-touch-points] [--exclude 104]
+
 # serial port busy?
 fuser -v /dev/ttyACM0        # "serial-monitor" = close the Arduino IDE Serial Monitor tab
 ```
@@ -242,8 +263,8 @@ Stop with Q in the camera window or Ctrl+C, not Ctrl+Z, which pauses the program
   - Export the model to NCNN or ONNX for the Pi (`yolo export model=best_v16.pt format=ncnn`).
   - Lower the color resolution (e.g. 1280 × 720 or 640 × 480), or run detection only every 2nd–3rd frame.
   - Arm lag: upload the coordinated-`MOVE` sketch. Optionally raise the baud rate to 115200 on both sides, or lower `MOVE_STEP_DELAY_MS` (15 ms per degree now).
-- [ ] Keep tuning `GRAB_FORWARD_MM`, `GRAB_LEFT_MM`, `GRAB_Z_MM` on real plants, 10 mm at a time.
-- [ ] Check that the claw (tilted up) clears the box rim when lowering into the bin, and that base 170 is right.
+- [ ] Grab-point recalibration (section 4): 8–10 `--tune` grabs spread over the work area, then `--from-grabs`, then grab offsets to 0.
+- [ ] Check that the claw (tilted up) clears the box rim when lowering into the bin, and that base 150 is right.
 - [ ] Optional: re-mount the claw horn 1–2 teeth so it can face the stem more level, then set `TILT_HORN_SHIFT_DEG` and measure the reference pose.
 - [ ] Optional: wrist measurements at tilt 0, 5, 10 (the table starts at 15).
 - [ ] Commit the working versions to Git: both scripts, both JSON files, and the sketch.
